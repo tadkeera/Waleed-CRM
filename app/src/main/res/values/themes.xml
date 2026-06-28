@@ -2,26 +2,26 @@
 <resources>
     <!-- 
       ========================================================
-      DEFINITIVE ROOT-CAUSE FIX FOR THE EXACT ERROR IN LOGS:
+      DEFINITIVE FIX FOR THE EXACT ERROR IN YOUR LOGS:
       "style attribute 'attr/windowActionBar' not found"
       "style attribute 'attr/windowNoTitle' not found"
       ========================================================
 
-      Root cause: During resource merging, something (library or generated code)
-      is still referencing the old AppCompat attributes.
+      This error happens during resource merging when legacy 
+      attributes are referenced.
 
-      SOLUTION: 
-      - Use Theme.Material3.Light.NoActionBar as parent (modern)
-      - Explicitly provide the two attributes with the `android:` namespace.
-      This satisfies the linker without pulling legacy AppCompat code.
+      FIX: Use Material3 NoActionBar parent + explicitly provide 
+      BOTH the android: and non-android versions of the attributes.
     -->
     <style name="Theme.PharmaCommCRM" parent="Theme.Material3.Light.NoActionBar">
         <item name="colorPrimary">@color/primary</item>
         <item name="android:statusBarColor">@color/primary</item>
         <item name="android:navigationBarColor">@color/surface</item>
 
-        <!-- Explicitly provide the attributes that the merger is looking for -->
+        <!-- Explicitly provide both versions to satisfy any merger -->
         <item name="android:windowActionBar">false</item>
+        <item name="windowActionBar">false</item>
         <item name="android:windowNoTitle">true</item>
+        <item name="windowNoTitle">true</item>
     </style>
 </resources>

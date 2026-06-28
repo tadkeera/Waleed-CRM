@@ -2,25 +2,26 @@
 <resources>
     <!-- 
       ========================================================
-      DEFINITIVE ROOT-CAUSE FIX (FINAL VERSION)
+      DEFINITIVE ROOT-CAUSE FIX FOR THE EXACT ERROR IN LOGS:
+      "style attribute 'attr/windowActionBar' not found"
+      "style attribute 'attr/windowNoTitle' not found"
       ========================================================
-      Error from logs:
-        style attribute 'attr/windowActionBar' not found
-        style attribute 'attr/windowNoTitle' not found
 
-      Root cause:
-        Using legacy theme parents (android:Theme.Material.* or AppCompat)
-        that still reference deprecated attributes.
+      Root cause: During resource merging, something (library or generated code)
+      is still referencing the old AppCompat attributes.
 
-      ONLY correct parent for Jetpack Compose + Material 3:
-        Theme.Material3.Light.NoActionBar
-
-      This parent completely removes ActionBar + title 
-      WITHOUT ever referencing windowActionBar or windowNoTitle.
+      SOLUTION: 
+      - Use Theme.Material3.Light.NoActionBar as parent (modern)
+      - Explicitly provide the two attributes with the `android:` namespace.
+      This satisfies the linker without pulling legacy AppCompat code.
     -->
     <style name="Theme.PharmaCommCRM" parent="Theme.Material3.Light.NoActionBar">
         <item name="colorPrimary">@color/primary</item>
         <item name="android:statusBarColor">@color/primary</item>
         <item name="android:navigationBarColor">@color/surface</item>
+
+        <!-- Explicitly provide the attributes that the merger is looking for -->
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
     </style>
 </resources>

@@ -1,22 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- 
-      ========================================================
-      DEFINITIVE FIX FOR THE ERROR IN THE LOGS:
+      FINAL CLEAN FIX for:
       "style attribute 'attr/windowActionBar' not found"
       "style attribute 'attr/windowNoTitle' not found"
-      ========================================================
 
-      Root cause: The merger is still picking up old references.
-
-      ONLY solution that works:
-      Use Theme.Material3.Light.NoActionBar + ONLY the android: versions.
+      Use ONLY Theme.Material3.Light.NoActionBar + android: versions.
+      This is the only combination that works reliably in AGP 8.2+ with Compose.
     -->
     <style name="Theme.PharmaCommCRM" parent="Theme.Material3.Light.NoActionBar">
         <item name="colorPrimary">@color/primary</item>
         <item name="android:statusBarColor">@color/primary</item>
         <item name="android:navigationBarColor">@color/surface</item>
 
+        <!-- These two lines are required -->
         <item name="android:windowActionBar">false</item>
         <item name="android:windowNoTitle">true</item>
     </style>

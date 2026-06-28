@@ -1,4 +1,4 @@
-name: Build APK - PharmaComm CRM
+name: Build Debug APK
 
 on:
   workflow_dispatch:
@@ -21,13 +21,11 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: gradle
 
-      - name: Setup Gradle 8.5
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.5'
-          cache-disabled: false
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -55,7 +53,7 @@ jobs:
           tag_name: v${{ github.run_number }}
           name: PharmaComm CRM v${{ github.run_number }}
           body: |
-            ## ✅ PharmaComm CRM - APK جاهز للتنزيل
+            ## ✅ PharmaComm CRM APK - جاهز للتنزيل
 
             **قم بتحميل الملف أدناه مباشرة**
 

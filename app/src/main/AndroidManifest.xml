@@ -30,7 +30,8 @@
             android:name=".presentation.MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:theme="@style/Theme.PharmaCommCRM">
+            android:theme="@style/Theme.PharmaCommCRM"
+            tools:targetApi="34">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

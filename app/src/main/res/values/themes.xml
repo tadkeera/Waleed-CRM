@@ -1,12 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.PharmaCommCRM" parent="android:Theme.Material.Light.NoActionBar">
+    <!-- 
+      ========================================================
+      DEFINITIVE ROOT-CAUSE FIX (FINAL VERSION)
+      ========================================================
+      Error from logs:
+        style attribute 'attr/windowActionBar' not found
+        style attribute 'attr/windowNoTitle' not found
+
+      Root cause:
+        Using legacy theme parents (android:Theme.Material.* or AppCompat)
+        that still reference deprecated attributes.
+
+      ONLY correct parent for Jetpack Compose + Material 3:
+        Theme.Material3.Light.NoActionBar
+
+      This parent completely removes ActionBar + title 
+      WITHOUT ever referencing windowActionBar or windowNoTitle.
+    -->
+    <style name="Theme.PharmaCommCRM" parent="Theme.Material3.Light.NoActionBar">
+        <item name="colorPrimary">@color/primary</item>
         <item name="android:statusBarColor">@color/primary</item>
         <item name="android:navigationBarColor">@color/surface</item>
-    </style>
-    
-    <style name="Theme.PharmaCommCRM.NoActionBar">
-        <item name="windowActionBar">false</item>
-        <item name="windowNoTitle">true</item>
     </style>
 </resources>

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PharmaComm CRM</string>
+    <string name="clients">قائمة العملاء</string>
+    <string name="doctors">الأطباء والرسائل الجماعية</string>
+    <string name="dashboard">لوحة التحكم</string>
+    <string name="add_client">إضافة عميل</string>
+    <string name="edit_client">تعديل العميل</string>
+    <string name="save">حفظ</string>
+    <string name="cancel">إلغاء</string>
+    <string name="delete">حذف</string>
+    <string name="search">بحث...</string>
+    <string name="import_contacts">استيراد جهات الاتصال</string>
+    <string name="send_bulk_whatsapp">إرسال رسالة جماعية</string>
+    <string name="filter_specialty">التخصص</string>
+    <string name="filter_region">المنطقة</string>
+    <string name="filter_class">الكلاس</string>
+    <string name="call_overlay_title">مكالمة فائتة جديدة</string>
+    <string name="save_contact">حفظ في الـ CRM</string>
+    <string name="class_a">Class A</string>
+    <string name="class_b">Class B</string>
+    <string name="class_c">Class C</string>
+    <string name="doctor">طبيب</string>
+    <string name="pharmacist">صيدلي</string>
+    <string name="procurement_manager">مدير مشتريات</string>
+    <string name="specialty">التخصص</string>
+    <string name="region">المنطقة</string>
+    <string name="add_phone">إضافة رقم</string>
+    <string name="phones">الأرقام</string>
+    <string name="client_type">نوع العميل</string>
+    <string name="importance_class">الأهمية</string>
+    <string name="total_clients">إجمالي العملاء</string>
+    <string name="completed">مكتمل</string>
+    <string name="incomplete">غير مكتمل</string>
+    <string name="weekly_contacts">التواصل الأسبوعي</string>
+    <string name="dormancy_alerts">تنبيهات الانقطاع</string>
+    <string name="no_data">لا توجد بيانات</string>
+    <string name="loading">جارٍ التحميل...</string>
+    <string name="success">تم بنجاح</string>
+    <string name="error">خطأ</string>
+</resources>

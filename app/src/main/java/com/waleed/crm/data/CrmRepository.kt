@@ -53,63 +53,65 @@ class CrmRepository(context: Context) {
     }
 
     suspend fun insertClient(client: Client): Long = withContext(Dispatchers.IO) {
+        val normalizedClient = client.normalizedForSaving()
         val db = dbHelper.writableDatabase
-        var cardColor = client.cardColor
-        if (client.clientType == "طبيب" && client.specialization.isNotBlank()) {
-            val existingSpec = getSpecializationByName(client.specialization)
+        var cardColor = normalizedClient.cardColor
+        if (normalizedClient.clientType == "طبيب" && normalizedClient.specialization.isNotBlank()) {
+            val existingSpec = getSpecializationByName(normalizedClient.specialization)
             if (existingSpec != null) {
                 cardColor = existingSpec.color
             } else {
                 cardColor = colorsPool.random()
-                addSpecializationInternal(client.specialization, cardColor)
+                addSpecializationInternal(normalizedClient.specialization, cardColor)
             }
         }
-        if (client.location.isNotBlank()) {
-            addLocationInternal(client.location)
+        if (normalizedClient.location.isNotBlank()) {
+            addLocationInternal(normalizedClient.location)
         }
 
         val cv = ContentValues().apply {
-            put("name", client.name)
-            put("phone", client.phone)
-            put("second_phone", client.secondPhone)
-            put("client_type", client.clientType)
-            put("specialization", client.specialization)
-            put("client_class", client.clientClass)
-            put("location", client.location)
-            put("is_classified", if (client.isClassified) 1 else 0)
+            put("name", normalizedClient.name)
+            put("phone", normalizedClient.phone)
+            put("second_phone", normalizedClient.secondPhone)
+            put("client_type", normalizedClient.clientType)
+            put("specialization", normalizedClient.specialization)
+            put("client_class", normalizedClient.clientClass)
+            put("location", normalizedClient.location)
+            put("is_classified", if (normalizedClient.isClassified) 1 else 0)
             put("card_color", cardColor)
-            put("date_added", client.dateAdded)
+            put("date_added", normalizedClient.dateAdded)
         }
         db.insert(DatabaseHelper.TABLE_CLIENTS, null, cv)
     }
 
     suspend fun updateClient(client: Client): Int = withContext(Dispatchers.IO) {
+        val normalizedClient = client.normalizedForSaving()
         val db = dbHelper.writableDatabase
-        var cardColor = client.cardColor
-        if (client.clientType == "طبيب" && client.specialization.isNotBlank()) {
-            val existingSpec = getSpecializationByName(client.specialization)
+        var cardColor = normalizedClient.cardColor
+        if (normalizedClient.clientType == "طبيب" && normalizedClient.specialization.isNotBlank()) {
+            val existingSpec = getSpecializationByName(normalizedClient.specialization)
             if (existingSpec != null) {
                 cardColor = existingSpec.color
             } else {
                 cardColor = colorsPool.random()
-                addSpecializationInternal(client.specialization, cardColor)
+                addSpecializationInternal(normalizedClient.specialization, cardColor)
             }
         }
-        if (client.location.isNotBlank()) {
-            addLocationInternal(client.location)
+        if (normalizedClient.location.isNotBlank()) {
+            addLocationInternal(normalizedClient.location)
         }
 
         val cv = ContentValues().apply {
-            put("name", client.name)
-            put("phone", client.phone)
-            put("second_phone", client.secondPhone)
-            put("client_type", client.clientType)
-            put("specialization", client.specialization)
-            put("client_class", client.clientClass)
-            put("location", client.location)
-            put("is_classified", if (client.isClassified) 1 else 0)
+            put("name", normalizedClient.name)
+            put("phone", normalizedClient.phone)
+            put("second_phone", normalizedClient.secondPhone)
+            put("client_type", normalizedClient.clientType)
+            put("specialization", normalizedClient.specialization)
+            put("client_class", normalizedClient.clientClass)
+            put("location", normalizedClient.location)
+            put("is_classified", if (normalizedClient.isClassified) 1 else 0)
             put("card_color", cardColor)
-            put("date_added", client.dateAdded)
+            put("date_added", normalizedClient.dateAdded)
         }
         db.update(DatabaseHelper.TABLE_CLIENTS, cv, "id = ?", arrayOf(client.id.toString()))
     }
@@ -311,12 +313,16 @@ class CrmRepository(context: Context) {
     }
 
     private fun cursorToClient(cursor: Cursor): Client {
+        val clientType = cursor.getString(cursor.getColumnIndexOrThrow("client_type")) ?: "طبيب"
+        val rawName = cursor.getString(cursor.getColumnIndexOrThrow("name")) ?: ""
+        val rawPhone = cursor.getString(cursor.getColumnIndexOrThrow("phone")) ?: ""
+        val rawSecondPhone = cursor.getString(cursor.getColumnIndexOrThrow("second_phone")) ?: ""
         return Client(
             id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
-            name = cursor.getString(cursor.getColumnIndexOrThrow("name")),
-            phone = cursor.getString(cursor.getColumnIndexOrThrow("phone")),
-            secondPhone = cursor.getString(cursor.getColumnIndexOrThrow("second_phone")) ?: "",
-            clientType = cursor.getString(cursor.getColumnIndexOrThrow("client_type")) ?: "طبيب",
+            name = if (clientType == "طبيب") rawName.withDoctorPrefix() else rawName.trim(),
+            phone = rawPhone.withYemenPhoneCode(),
+            secondPhone = if (rawSecondPhone.isBlank()) "" else rawSecondPhone.withYemenPhoneCode(),
+            clientType = clientType,
             specialization = cursor.getString(cursor.getColumnIndexOrThrow("specialization")) ?: "",
             clientClass = cursor.getString(cursor.getColumnIndexOrThrow("client_class")) ?: "B",
             location = cursor.getString(cursor.getColumnIndexOrThrow("location")) ?: "",

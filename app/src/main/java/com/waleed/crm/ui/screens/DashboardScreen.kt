@@ -161,16 +161,64 @@ fun DashboardScreen(viewModel: CrmViewModel, navController: NavController) {
                                 Text("ممتاز! تم مراسلة جميع الأطباء هذا الأسبوع.", color = MaterialTheme.colorScheme.onSecondaryContainer, fontSize = 14.sp)
                             } else {
                                 Spacer(modifier = Modifier.height(12.dp))
-                                data.uncontactedDoctorsThisWeek.forEach { doctor ->
-                                    Row(
+                                data.uncontactedDoctorsThisWeek.forEachIndexed { index, doctor ->
+                                    Card(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(vertical = 4.dp)
-                                            .clickable { navController.navigate("add_edit_client/${doctor.id}?phone=") },
-                                        horizontalArrangement = Arrangement.SpaceBetween
+                                            .padding(vertical = 5.dp),
+                                        shape = RoundedCornerShape(14.dp),
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)
+                                        ),
+                                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                                     ) {
-                                        Text(text = "• ${doctor.name}", fontWeight = FontWeight.Medium, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
-                                        Text(text = "عرض >", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Surface(
+                                                modifier = Modifier.size(34.dp),
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.14f)
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Text(
+                                                        text = "${index + 1}",
+                                                        color = MaterialTheme.colorScheme.secondary,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 13.sp
+                                                    )
+                                                }
+                                            }
+                                            Spacer(modifier = Modifier.width(12.dp))
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = doctor.name,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 15.sp,
+                                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                                )
+                                                if (doctor.specialization.isNotBlank() || doctor.location.isNotBlank()) {
+                                                    Spacer(modifier = Modifier.height(3.dp))
+                                                    Text(
+                                                        text = listOf(doctor.specialization, doctor.location).filter { it.isNotBlank() }.joinToString(" • "),
+                                                        fontSize = 12.sp,
+                                                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.68f)
+                                                    )
+                                                }
+                                            }
+                                            Badge(containerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.16f)) {
+                                                Text(
+                                                    text = "لم يراسل",
+                                                    color = MaterialTheme.colorScheme.secondary,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }

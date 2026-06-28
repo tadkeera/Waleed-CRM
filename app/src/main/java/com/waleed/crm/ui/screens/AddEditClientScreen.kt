@@ -23,6 +23,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.waleed.crm.data.Client
+import com.waleed.crm.data.withDoctorPrefix
+import com.waleed.crm.data.withYemenPhoneCode
 import com.waleed.crm.ui.viewmodel.CrmViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -34,8 +36,8 @@ fun AddEditClientScreen(
     incomingPhone: String
 ) {
     var name by remember { mutableStateOf("") }
-    var phone by remember { mutableStateOf(incomingPhone) }
-    var secondPhone by remember { mutableStateOf("") }
+    var phone by remember { mutableStateOf(if (incomingPhone.isBlank()) "+967" else incomingPhone.withYemenPhoneCode()) }
+    var secondPhone by remember { mutableStateOf("+967") }
     var showSecondPhone by remember { mutableStateOf(false) }
     var clientType by remember { mutableStateOf("طبيب") } // طبيب، صيدلي، مدير مشتريات
     var specialization by remember { mutableStateOf("") }
@@ -57,9 +59,9 @@ fun AddEditClientScreen(
         if (currentClientId != 0L) {
             viewModel.getClientById(currentClientId) { client ->
                 if (client != null) {
-                    name = client.name
-                    phone = client.phone
-                    secondPhone = client.secondPhone
+                    name = if (client.clientType == "طبيب") client.name.withDoctorPrefix() else client.name
+                    phone = client.phone.withYemenPhoneCode()
+                    secondPhone = if (client.secondPhone.isBlank()) "+967" else client.secondPhone.withYemenPhoneCode()
                     if (secondPhone.isNotBlank()) showSecondPhone = true
                     clientType = client.clientType
                     specialization = client.specialization
@@ -70,7 +72,9 @@ fun AddEditClientScreen(
                 }
             }
         } else if (incomingPhone.isNotBlank()) {
-            phone = incomingPhone
+            phone = incomingPhone.withYemenPhoneCode()
+        } else {
+            phone = "+967"
         }
     }
 
@@ -106,7 +110,7 @@ fun AddEditClientScreen(
             item {
                 OutlinedTextField(
                     value = name,
-                    onValueChange = { name = it },
+                    onValueChange = { name = if (clientType == "طبيب") it.withDoctorPrefix() else it },
                     label = { Text("الاسم") },
                     modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
                     shape = RoundedCornerShape(12.dp),
@@ -121,7 +125,7 @@ fun AddEditClientScreen(
                 ) {
                     OutlinedTextField(
                         value = phone,
-                        onValueChange = { phone = it },
+                        onValueChange = { phone = it.ifBlank { "+967" } },
                         label = { Text("رقم الهاتف الرئيسي") },
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(12.dp),
@@ -131,7 +135,10 @@ fun AddEditClientScreen(
                     if (!showSecondPhone) {
                         Spacer(modifier = Modifier.width(8.dp))
                         IconButton(
-                            onClick = { showSecondPhone = true },
+                            onClick = {
+                                showSecondPhone = true
+                                if (secondPhone.isBlank()) secondPhone = "+967"
+                            },
                             colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
                             modifier = Modifier.size(48.dp)
                         ) {
@@ -145,7 +152,7 @@ fun AddEditClientScreen(
                 AnimatedVisibility(visible = showSecondPhone) {
                     OutlinedTextField(
                         value = secondPhone,
-                        onValueChange = { secondPhone = it },
+                        onValueChange = { secondPhone = it.ifBlank { "+967" } },
                         label = { Text("رقم الهاتف الإضافي") },
                         modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
                         shape = RoundedCornerShape(12.dp),
@@ -288,9 +295,9 @@ fun AddEditClientScreen(
                                     if (name.isNotBlank() && phone.isNotBlank()) {
                                         val client = Client(
                                             id = currentClientId,
-                                            name = name,
-                                            phone = phone,
-                                            secondPhone = secondPhone,
+                                            name = if (clientType == "طبيب") name.withDoctorPrefix() else name.trim(),
+                                            phone = phone.withYemenPhoneCode(),
+                                            secondPhone = if (secondPhone.isBlank() || secondPhone == "+967") "" else secondPhone.withYemenPhoneCode(),
                                             clientType = clientType,
                                             specialization = if (clientType == "طبيب") specialization else "",
                                             clientClass = clientClass,
@@ -354,9 +361,9 @@ fun AddEditClientScreen(
                         if (name.isNotBlank() && phone.isNotBlank()) {
                             val client = Client(
                                 id = currentClientId,
-                                name = name,
-                                phone = phone,
-                                secondPhone = secondPhone,
+                                name = if (clientType == "طبيب") name.withDoctorPrefix() else name.trim(),
+                                phone = phone.withYemenPhoneCode(),
+                                secondPhone = if (secondPhone.isBlank() || secondPhone == "+967") "" else secondPhone.withYemenPhoneCode(),
                                 clientType = clientType,
                                 specialization = if (clientType == "طبيب") specialization else "",
                                 clientClass = clientClass,

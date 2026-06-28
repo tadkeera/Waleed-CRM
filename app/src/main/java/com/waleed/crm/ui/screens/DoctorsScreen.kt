@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Message
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -42,13 +43,15 @@ fun DoctorsScreen(viewModel: CrmViewModel, navController: NavController) {
     var locSearchText by remember { mutableStateOf("") }
     var isLocDropdownExpanded by remember { mutableStateOf(false) }
 
+    var doctorNameSearchText by remember { mutableStateOf("") }
     var isMultiSelectMode by remember { mutableStateOf(false) }
     val selectedDoctorIds = remember { mutableStateListOf<Long>() }
 
     val doctors = clients.filter { it.clientType == "طبيب" && it.isClassified }
     val filteredDoctors = doctors.filter { doctor ->
         (selectedSpecialization.isBlank() || doctor.specialization == selectedSpecialization) &&
-        (selectedLocation.isBlank() || doctor.location == selectedLocation)
+        (selectedLocation.isBlank() || doctor.location == selectedLocation) &&
+        (doctorNameSearchText.length < 3 || doctor.name.contains(doctorNameSearchText, ignoreCase = true))
     }
 
     Scaffold(
@@ -58,11 +61,12 @@ fun DoctorsScreen(viewModel: CrmViewModel, navController: NavController) {
                 actions = {
                     if (isMultiSelectMode) {
                         IconButton(onClick = {
-                            if (selectedDoctorIds.size == filteredDoctors.size) {
+                            val selectableDoctors = if (doctorNameSearchText.length in 1..2) emptyList() else filteredDoctors
+                            if (selectedDoctorIds.size == selectableDoctors.size) {
                                 selectedDoctorIds.clear()
                             } else {
                                 selectedDoctorIds.clear()
-                                selectedDoctorIds.addAll(filteredDoctors.map { it.id })
+                                selectedDoctorIds.addAll(selectableDoctors.map { it.id })
                             }
                         }) {
                             Icon(Icons.Default.Check, contentDescription = "تحديد الكل")
@@ -84,6 +88,33 @@ fun DoctorsScreen(viewModel: CrmViewModel, navController: NavController) {
                 .fillMaxSize()
                 .padding(16.dp)
         ) {
+            OutlinedTextField(
+                value = doctorNameSearchText,
+                onValueChange = { doctorNameSearchText = it },
+                label = { Text("بحث باسم الطبيب (اكتب 3 أحرف)") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = "بحث") },
+                trailingIcon = {
+                    if (doctorNameSearchText.isNotBlank()) {
+                        IconButton(onClick = { doctorNameSearchText = "" }) {
+                            Icon(Icons.Default.Clear, contentDescription = "مسح البحث")
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                shape = RoundedCornerShape(12.dp),
+                singleLine = true
+            )
+
+            val nameSearchHint = doctorNameSearchText.length in 1..2
+            if (nameSearchHint) {
+                Text(
+                    text = "اكتب 3 أحرف على الأقل لعرض بطاقات الأطباء المشابهة.",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(bottom = 10.dp, start = 4.dp, end = 4.dp)
+                )
+            }
+
             // Revamped Specialization Search Filter Box
             ExposedDropdownMenuBox(
                 expanded = isSpecDropdownExpanded,
@@ -228,13 +259,20 @@ fun DoctorsScreen(viewModel: CrmViewModel, navController: NavController) {
                 }
             }
 
-            if (filteredDoctors.isEmpty()) {
+            val doctorsToShow = if (doctorNameSearchText.length in 1..2) emptyList() else filteredDoctors
+
+            if (doctorsToShow.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("لا يوجد أطباء مطابقين للفلاتر المحددة.", color = Color.Gray, fontSize = 16.sp)
+                    Text(
+                        if (doctorNameSearchText.length in 1..2) "ابدأ بكتابة 3 أحرف من اسم الطبيب لعرض النتائج."
+                        else "لا يوجد أطباء مطابقين للفلاتر المحددة.",
+                        color = Color.Gray,
+                        fontSize = 16.sp
+                    )
                 }
             } else {
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    items(filteredDoctors, key = { it.id }) { doctor ->
+                    items(doctorsToShow, key = { it.id }) { doctor ->
                         val isSelected = selectedDoctorIds.contains(doctor.id)
                         
                         DoctorCardSelectable(

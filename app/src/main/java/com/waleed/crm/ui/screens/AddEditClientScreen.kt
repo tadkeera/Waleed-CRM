@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.waleed.crm.data.Client
+import com.waleed.crm.data.stripDoctorPrefix
 import com.waleed.crm.data.withDoctorPrefix
 import com.waleed.crm.data.withYemenPhoneCode
 import com.waleed.crm.ui.viewmodel.CrmViewModel
@@ -44,6 +45,8 @@ fun AddEditClientScreen(
     var clientClass by remember { mutableStateOf("B") } // A, B, C
     var location by remember { mutableStateOf("") }
     var clientCardColor by remember { mutableStateOf("#2196F3") }
+    var notes by remember { mutableStateOf("") }
+    var duplicateMessage by remember { mutableStateOf("") }
 
     var currentClientId by remember { mutableStateOf(clientId) }
     var newPharmacyName by remember { mutableStateOf("") }
@@ -59,7 +62,7 @@ fun AddEditClientScreen(
         if (currentClientId != 0L) {
             viewModel.getClientById(currentClientId) { client ->
                 if (client != null) {
-                    name = if (client.clientType == "طبيب") client.name.withDoctorPrefix() else client.name
+                    name = if (client.clientType == "طبيب") client.name.stripDoctorPrefix() else client.name
                     phone = client.phone.withYemenPhoneCode()
                     secondPhone = if (client.secondPhone.isBlank()) "+967" else client.secondPhone.withYemenPhoneCode()
                     if (secondPhone.isNotBlank()) showSecondPhone = true
@@ -68,6 +71,7 @@ fun AddEditClientScreen(
                     clientClass = client.clientClass
                     location = client.location
                     clientCardColor = client.cardColor
+                    notes = client.notes
                     viewModel.loadNearbyPharmacies(currentClientId)
                 }
             }
@@ -110,8 +114,9 @@ fun AddEditClientScreen(
             item {
                 OutlinedTextField(
                     value = name,
-                    onValueChange = { name = if (clientType == "طبيب") it.withDoctorPrefix() else it },
-                    label = { Text("الاسم") },
+                    onValueChange = { name = it },
+                    label = { Text(if (clientType == "طبيب") "اسم الطبيب بدون السابقة د." else "الاسم") },
+                    prefix = if (clientType == "طبيب") ({ Text("د. ") }) else null,
                     modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
                     shape = RoundedCornerShape(12.dp),
                     singleLine = true
@@ -272,6 +277,8 @@ fun AddEditClientScreen(
                 }
             }
 
+            item { OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("ملاحظات عن العميل") }, modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), shape = RoundedCornerShape(12.dp), minLines = 3, maxLines = 5) }
+            if (duplicateMessage.isNotBlank()) { item { Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer), shape = RoundedCornerShape(12.dp)) { Text(duplicateMessage, color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.padding(12.dp), fontWeight = FontWeight.Bold) } } }
             // Nearby Pharmacies Section (linked to Client ID)
             item {
                 Card(
@@ -303,11 +310,10 @@ fun AddEditClientScreen(
                                             clientClass = clientClass,
                                             location = location,
                                             isClassified = true,
-                                            cardColor = clientCardColor
+                                            cardColor = clientCardColor,
+                                            notes = notes
                                         )
-                                        viewModel.saveClient(client) { newId ->
-                                            currentClientId = newId
-                                        }
+                                        viewModel.saveClient(client) { newId -> if (newId < 0) duplicateMessage = "يوجد عميل/طبيب بنفس الاسم أو رقم الهاتف مسبقاً." else { duplicateMessage = ""; currentClientId = newId } }
                                     }
                                 },
                                 shape = RoundedCornerShape(12.dp)
@@ -369,11 +375,10 @@ fun AddEditClientScreen(
                                 clientClass = clientClass,
                                 location = location,
                                 isClassified = true,
-                                cardColor = clientCardColor
+                                cardColor = clientCardColor,
+                                notes = notes
                             )
-                            viewModel.saveClient(client) {
-                                navController.popBackStack()
-                            }
+                            viewModel.saveClient(client) { resultId -> if (resultId < 0) duplicateMessage = "يوجد عميل/طبيب بنفس الاسم أو رقم الهاتف مسبقاً." else navController.popBackStack() }
                         }
                     },
                     modifier = Modifier.fillMaxWidth().height(56.dp),

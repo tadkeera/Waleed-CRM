@@ -13,7 +13,9 @@ data class DashboardAnalytics(
     val unclassifiedDoctors: List<Client>,
     val contactedDoctorsThisWeek: List<DoctorMessageCount>,
     val uncontactedDoctorsThisWeek: List<Client>
-)
+) {
+    companion object { val Empty = DashboardAnalytics(0, emptyList(), emptyList(), emptyList()) }
+}
 
 class CrmRepository(context: Context) {
     private val dbHelper = DatabaseHelper(context)
@@ -80,6 +82,8 @@ class CrmRepository(context: Context) {
             put("is_classified", if (normalizedClient.isClassified) 1 else 0)
             put("card_color", cardColor)
             put("date_added", normalizedClient.dateAdded)
+            put("updated_at", normalizedClient.updatedAt)
+            put("notes", normalizedClient.notes)
         }
         db.insert(DatabaseHelper.TABLE_CLIENTS, null, cv)
     }
@@ -112,6 +116,8 @@ class CrmRepository(context: Context) {
             put("is_classified", if (normalizedClient.isClassified) 1 else 0)
             put("card_color", cardColor)
             put("date_added", normalizedClient.dateAdded)
+            put("updated_at", normalizedClient.updatedAt)
+            put("notes", normalizedClient.notes)
         }
         db.update(DatabaseHelper.TABLE_CLIENTS, cv, "id = ?", arrayOf(client.id.toString()))
     }
@@ -248,13 +254,66 @@ class CrmRepository(context: Context) {
         db.delete(DatabaseHelper.TABLE_GALLERY_FILES, "id = ?", arrayOf(id.toString()))
     }
 
-    suspend fun logMessage(clientId: Long) = withContext(Dispatchers.IO) {
-        val db = dbHelper.writableDatabase
-        val cv = ContentValues().apply {
-            put("client_id", clientId)
-            put("timestamp", System.currentTimeMillis())
+    suspend fun findDuplicateClient(client: Client): Client? = withContext(Dispatchers.IO) {
+        val n = client.normalizedForSaving()
+        val args = mutableListOf<String>()
+        val conditions = mutableListOf<String>()
+        if (n.phone.isNotBlank() && n.phone != "+967") { conditions.add("phone = ? OR second_phone = ?"); args.add(n.phone); args.add(n.phone) }
+        if (n.secondPhone.isNotBlank()) { conditions.add("phone = ? OR second_phone = ?"); args.add(n.secondPhone); args.add(n.secondPhone) }
+        if (n.name.isNotBlank()) { conditions.add("client_type = ? AND name = ?"); args.add(n.clientType); args.add(n.name) }
+        if (conditions.isEmpty()) return@withContext null
+        val where = "(${conditions.joinToString(") OR (")}) AND id != ?"
+        args.add(n.id.toString())
+        dbHelper.readableDatabase.query(DatabaseHelper.TABLE_CLIENTS, null, where, args.toTypedArray(), null, null, "id DESC", "1").use { if (it.moveToFirst()) cursorToClient(it) else null }
+    }
+
+    suspend fun insertMessageTemplate(template: MessageTemplate): Long = withContext(Dispatchers.IO) {
+        val cv = ContentValues().apply { put("title", template.title.trim()); put("body", template.body.trim()); put("date_added", template.dateAdded) }
+        dbHelper.writableDatabase.insert(DatabaseHelper.TABLE_MESSAGE_TEMPLATES, null, cv)
+    }
+
+    suspend fun deleteMessageTemplate(id: Long): Int = withContext(Dispatchers.IO) {
+        dbHelper.writableDatabase.delete(DatabaseHelper.TABLE_MESSAGE_TEMPLATES, "id = ?", arrayOf(id.toString()))
+    }
+
+    suspend fun getMessageTemplates(): List<MessageTemplate> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<MessageTemplate>()
+        dbHelper.readableDatabase.query(DatabaseHelper.TABLE_MESSAGE_TEMPLATES, null, null, null, null, null, "date_added DESC").use {
+            while (it.moveToNext()) list.add(MessageTemplate(it.getLong(it.getColumnIndexOrThrow("id")), it.getString(it.getColumnIndexOrThrow("title")) ?: "", it.getString(it.getColumnIndexOrThrow("body")) ?: "", it.getLong(it.getColumnIndexOrThrow("date_added"))))
         }
-        db.insert(DatabaseHelper.TABLE_MESSAGE_LOGS, null, cv)
+        list
+    }
+
+    suspend fun createMessageCampaign(c: MessageCampaign): Long = withContext(Dispatchers.IO) {
+        val cv = ContentValues().apply { put("title", c.title); put("target_count", c.targetCount); put("sent_count", c.sentCount); put("message_mode", c.messageMode); put("attachment_name", c.attachmentName); put("date_created", c.dateCreated) }
+        dbHelper.writableDatabase.insert(DatabaseHelper.TABLE_MESSAGE_CAMPAIGNS, null, cv)
+    }
+
+    suspend fun updateCampaignSentCount(campaignId: Long, sentCount: Int): Int = withContext(Dispatchers.IO) {
+        val cv = ContentValues().apply { put("sent_count", sentCount) }
+        dbHelper.writableDatabase.update(DatabaseHelper.TABLE_MESSAGE_CAMPAIGNS, cv, "id = ?", arrayOf(campaignId.toString()))
+    }
+
+    suspend fun getMessageCampaigns(): List<MessageCampaign> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<MessageCampaign>()
+        dbHelper.readableDatabase.query(DatabaseHelper.TABLE_MESSAGE_CAMPAIGNS, null, null, null, null, null, "date_created DESC").use {
+            while (it.moveToNext()) list.add(MessageCampaign(
+                id = it.getLong(it.getColumnIndexOrThrow("id")), title = it.getString(it.getColumnIndexOrThrow("title")) ?: "", targetCount = it.getInt(it.getColumnIndexOrThrow("target_count")), sentCount = it.getInt(it.getColumnIndexOrThrow("sent_count")), messageMode = it.getString(it.getColumnIndexOrThrow("message_mode")) ?: "TEXT_ONLY", attachmentName = it.getString(it.getColumnIndexOrThrow("attachment_name")) ?: "", dateCreated = it.getLong(it.getColumnIndexOrThrow("date_created"))))
+        }
+        list
+    }
+
+    suspend fun logMessage(log: MessageLog) = withContext(Dispatchers.IO) {
+        val cv = ContentValues().apply { put("client_id", log.clientId); put("timestamp", log.timestamp); put("message_text", log.messageText); put("attachment_name", log.attachmentName); put("attachment_type", log.attachmentType); put("send_mode", log.sendMode); put("campaign_id", log.campaignId); put("status", log.status) }
+        dbHelper.writableDatabase.insert(DatabaseHelper.TABLE_MESSAGE_LOGS, null, cv)
+    }
+
+    suspend fun logMessage(clientId: Long) = logMessage(MessageLog(clientId = clientId))
+
+    suspend fun getMessageLogsByClientId(clientId: Long): List<MessageLog> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<MessageLog>()
+        dbHelper.readableDatabase.query(DatabaseHelper.TABLE_MESSAGE_LOGS, null, "client_id = ?", arrayOf(clientId.toString()), null, null, "timestamp DESC").use { while (it.moveToNext()) list.add(cursorToMessageLog(it)) }
+        list
     }
 
     suspend fun getDashboardAnalytics(): DashboardAnalytics = withContext(Dispatchers.IO) {
@@ -328,7 +387,30 @@ class CrmRepository(context: Context) {
             location = cursor.getString(cursor.getColumnIndexOrThrow("location")) ?: "",
             isClassified = cursor.getInt(cursor.getColumnIndexOrThrow("is_classified")) == 1,
             cardColor = cursor.getString(cursor.getColumnIndexOrThrow("card_color")) ?: "#2196F3",
-            dateAdded = cursor.getLong(cursor.getColumnIndexOrThrow("date_added"))
+            dateAdded = cursor.getLong(cursor.getColumnIndexOrThrow("date_added")),
+            updatedAt = getLongOrDefault(cursor, "updated_at", cursor.getLong(cursor.getColumnIndexOrThrow("date_added"))),
+            notes = getStringOrDefault(cursor, "notes", "")
         )
+    }
+
+    private fun cursorToMessageLog(cursor: Cursor): MessageLog = MessageLog(
+        id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
+        clientId = cursor.getLong(cursor.getColumnIndexOrThrow("client_id")),
+        timestamp = cursor.getLong(cursor.getColumnIndexOrThrow("timestamp")),
+        messageText = getStringOrDefault(cursor, "message_text", ""),
+        attachmentName = getStringOrDefault(cursor, "attachment_name", ""),
+        attachmentType = getStringOrDefault(cursor, "attachment_type", ""),
+        sendMode = getStringOrDefault(cursor, "send_mode", "TEXT_ONLY"),
+        campaignId = getLongOrDefault(cursor, "campaign_id", 0L),
+        status = getStringOrDefault(cursor, "status", "OPENED")
+    )
+
+    private fun getStringOrDefault(cursor: Cursor, column: String, default: String): String {
+        val index = cursor.getColumnIndex(column)
+        return if (index >= 0 && !cursor.isNull(index)) cursor.getString(index) else default
+    }
+    private fun getLongOrDefault(cursor: Cursor, column: String, default: Long): Long {
+        val index = cursor.getColumnIndex(column)
+        return if (index >= 0 && !cursor.isNull(index)) cursor.getLong(index) else default
     }
 }

@@ -24,8 +24,14 @@ class CrmViewModel(private val repository: CrmRepository) : ViewModel() {
     private val _galleryFiles = MutableStateFlow<List<GalleryFile>>(emptyList())
     val galleryFiles: StateFlow<List<GalleryFile>> = _galleryFiles
 
-    private val _dashboardAnalytics = MutableStateFlow<DashboardAnalytics?>(null)
-    val dashboardAnalytics: StateFlow<DashboardAnalytics?> = _dashboardAnalytics
+    private val _dashboardAnalytics = MutableStateFlow(DashboardAnalytics.Empty)
+    val dashboardAnalytics: StateFlow<DashboardAnalytics> = _dashboardAnalytics
+
+    private val _messageTemplates = MutableStateFlow<List<MessageTemplate>>(emptyList())
+    val messageTemplates: StateFlow<List<MessageTemplate>> = _messageTemplates
+
+    private val _messageCampaigns = MutableStateFlow<List<MessageCampaign>>(emptyList())
+    val messageCampaigns: StateFlow<List<MessageCampaign>> = _messageCampaigns
 
     // State for Bulk WhatsApp Messaging Selection
     var selectedDoctorIdsForBulk = mutableListOf<Long>()
@@ -40,6 +46,8 @@ class CrmViewModel(private val repository: CrmRepository) : ViewModel() {
             _specializations.value = repository.getSpecializations()
             _locations.value = repository.getLocations()
             _galleryFiles.value = repository.getAllGalleryFiles()
+            _messageTemplates.value = repository.getMessageTemplates()
+            _messageCampaigns.value = repository.getMessageCampaigns()
             _dashboardAnalytics.value = repository.getDashboardAnalytics()
         }
     }
@@ -53,6 +61,8 @@ class CrmViewModel(private val repository: CrmRepository) : ViewModel() {
 
     fun saveClient(client: Client, onComplete: (Long) -> Unit) {
         viewModelScope.launch {
+            val duplicate = repository.findDuplicateClient(client)
+            if (duplicate != null) { onComplete(-duplicate.id); return@launch }
             val newId = if (client.id == 0L) {
                 repository.insertClient(client)
             } else {
@@ -122,11 +132,19 @@ class CrmViewModel(private val repository: CrmRepository) : ViewModel() {
         }
     }
 
+    fun addMessageTemplate(title: String, body: String) {
+        if (title.isBlank() || body.isBlank()) return
+        viewModelScope.launch { repository.insertMessageTemplate(MessageTemplate(title = title, body = body)); _messageTemplates.value = repository.getMessageTemplates() }
+    }
+    fun deleteMessageTemplate(id: Long) { viewModelScope.launch { repository.deleteMessageTemplate(id); _messageTemplates.value = repository.getMessageTemplates() } }
+    fun refreshMessagingData() { viewModelScope.launch { _messageTemplates.value = repository.getMessageTemplates(); _messageCampaigns.value = repository.getMessageCampaigns() } }
+    fun createMessageCampaign(campaign: MessageCampaign, onComplete: (Long) -> Unit) { viewModelScope.launch { val id = repository.createMessageCampaign(campaign); _messageCampaigns.value = repository.getMessageCampaigns(); onComplete(id) } }
+    fun updateCampaignSentCount(campaignId: Long, sentCount: Int) { if (campaignId <= 0L) return; viewModelScope.launch { repository.updateCampaignSentCount(campaignId, sentCount); _messageCampaigns.value = repository.getMessageCampaigns() } }
+    fun logMessage(log: MessageLog) { viewModelScope.launch { repository.logMessage(log); _dashboardAnalytics.value = repository.getDashboardAnalytics() } }
+    fun getMessageLogsByClientId(clientId: Long, onResult: (List<MessageLog>) -> Unit) { viewModelScope.launch { onResult(repository.getMessageLogsByClientId(clientId)) } }
     fun logBulkMessages(clientIds: List<Long>) {
         viewModelScope.launch {
-            for (id in clientIds) {
-                repository.logMessage(id)
-            }
+            for (id in clientIds) repository.logMessage(id)
             _dashboardAnalytics.value = repository.getDashboardAnalytics()
         }
     }

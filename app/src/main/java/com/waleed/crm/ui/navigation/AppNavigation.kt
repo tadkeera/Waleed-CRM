@@ -96,6 +96,12 @@ fun AppNavigation(
                 )
             }
             composable(
+                route = "client_details/{clientId}",
+                arguments = listOf(navArgument("clientId") { type = NavType.LongType })
+            ) { backStackEntry ->
+                ClientDetailsScreen(viewModel = viewModel, navController = navController, clientId = backStackEntry.arguments?.getLong("clientId") ?: 0L)
+            }
+            composable(
                 route = "bulk_message?specialization={specialization}&location={location}",
                 arguments = listOf(
                     navArgument("specialization") { type = NavType.StringType; defaultValue = "" },

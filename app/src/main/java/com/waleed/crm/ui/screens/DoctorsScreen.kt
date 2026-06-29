@@ -281,8 +281,7 @@ fun DoctorsScreen(viewModel: CrmViewModel, navController: NavController) {
                                 if (isMultiSelectMode) {
                                     if (isSelected) selectedDoctorIds.remove(doctor.id) else selectedDoctorIds.add(doctor.id)
                                     if (selectedDoctorIds.isEmpty()) isMultiSelectMode = false
-                                }
-                                // Single click navigation disabled as requested
+                                } else { navController.navigate("client_details/${doctor.id}") }
                             },
                             onLongClick = {
                                 isMultiSelectMode = true

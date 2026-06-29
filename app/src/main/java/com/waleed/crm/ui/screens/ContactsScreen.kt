@@ -120,7 +120,7 @@ fun ContactsScreen(viewModel: CrmViewModel, navController: NavController) {
                     items(filteredClients, key = { it.id }) { client ->
                         ClientCard(
                             client = client,
-                            onClick = {}, // Disabled single click navigation as requested
+                            onClick = { navController.navigate("client_details/${client.id}") },
                             onEdit = { navController.navigate("add_edit_client/${client.id}?phone=") },
                             onDelete = { viewModel.deleteClient(client.id) },
                             isMultiSelectMode = false,

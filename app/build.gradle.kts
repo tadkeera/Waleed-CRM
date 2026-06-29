@@ -12,8 +12,8 @@ android {
         applicationId = "com.waleed.crm"
         minSdk = 26
         targetSdk = 34
-        versionCode = 14
-        versionName = "2.3"
+        versionCode = 15
+        versionName = "2.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -80,4 +80,7 @@ dependencies {
 
     // Coil for image loading and previewing
     implementation("io.coil-kt:coil-compose:2.7.0")
+
+    // Unit testing for core data utilities
+    testImplementation("junit:junit:4.13.2")
 }

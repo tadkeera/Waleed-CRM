@@ -8,14 +8,29 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Calendar
 
+data class StatItem(val label: String, val count: Int)
+
 data class DashboardAnalytics(
     val totalClassifiedDoctors: Int,
     val unclassifiedDoctors: List<Client>,
     val contactedDoctorsThisWeek: List<DoctorMessageCount>,
-    val uncontactedDoctorsThisWeek: List<Client>
-) {
-    companion object { val Empty = DashboardAnalytics(0, emptyList(), emptyList(), emptyList()) }
-}
+    val uncontactedDoctorsThisWeek: List<Client>,
+    val totalDoctors: Int = 0,
+    val totalClients: Int = 0,
+    val totalCampaigns: Int = 0,
+    val totalCampaignTargets: Int = 0,
+    val totalCampaignOpened: Int = 0,
+    val weeklyMessages: Int = 0,
+    val monthlyMessages: Int = 0,
+    val textOnlyCampaigns: Int = 0,
+    val attachmentOnlyCampaigns: Int = 0,
+    val textAndAttachmentCampaigns: Int = 0,
+    val topContactedDoctors: List<DoctorMessageCount> = emptyList(),
+    val overdueDoctors: List<Client> = emptyList(),
+    val specializationStats: List<StatItem> = emptyList(),
+    val locationStats: List<StatItem> = emptyList(),
+    val recentCampaigns: List<MessageCampaign> = emptyList()
+) { companion object { val Empty = DashboardAnalytics(0, emptyList(), emptyList(), emptyList()) } }
 
 class CrmRepository(context: Context) {
     private val dbHelper = DatabaseHelper(context)
@@ -318,57 +333,66 @@ class CrmRepository(context: Context) {
 
     suspend fun getDashboardAnalytics(): DashboardAnalytics = withContext(Dispatchers.IO) {
         val db = dbHelper.readableDatabase
-        
-        var totalClassifiedDoctors = 0
-        db.rawQuery("SELECT COUNT(*) FROM ${DatabaseHelper.TABLE_CLIENTS} WHERE client_type = 'طبيب' AND is_classified = 1 AND specialization != '' AND location != ''", null).use {
-            if (it.moveToFirst()) totalClassifiedDoctors = it.getInt(0)
-        }
+        val startOfWeek = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -7) }.timeInMillis
+        val startOfMonth = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -30) }.timeInMillis
+        val totalClients = countQuery(db, "SELECT COUNT(*) FROM ${DatabaseHelper.TABLE_CLIENTS}")
+        val totalDoctors = countQuery(db, "SELECT COUNT(*) FROM ${DatabaseHelper.TABLE_CLIENTS} WHERE client_type = 'طبيب'")
+        val totalClassifiedDoctors = countQuery(db, "SELECT COUNT(*) FROM ${DatabaseHelper.TABLE_CLIENTS} WHERE client_type = 'طبيب' AND is_classified = 1 AND specialization != '' AND location != ''")
+        val weeklyMessages = countQuery(db, "SELECT COUNT(*) FROM ${DatabaseHelper.TABLE_MESSAGE_LOGS} WHERE timestamp >= ?", arrayOf(startOfWeek.toString()))
+        val monthlyMessages = countQuery(db, "SELECT COUNT(*) FROM ${DatabaseHelper.TABLE_MESSAGE_LOGS} WHERE timestamp >= ?", arrayOf(startOfMonth.toString()))
 
         val unclassifiedDoctors = mutableListOf<Client>()
-        db.rawQuery("SELECT * FROM ${DatabaseHelper.TABLE_CLIENTS} WHERE client_type = 'طبيب' AND (is_classified = 0 OR specialization = '' OR location = '')", null).use {
-            while (it.moveToNext()) {
-                unclassifiedDoctors.add(cursorToClient(it))
-            }
-        }
-
-        val cal = Calendar.getInstance()
-        cal.add(Calendar.DAY_OF_YEAR, -7)
-        val startOfWeek = cal.timeInMillis
+        db.rawQuery("SELECT * FROM ${DatabaseHelper.TABLE_CLIENTS} WHERE client_type = 'طبيب' AND (is_classified = 0 OR specialization = '' OR location = '') LIMIT 20", null).use { while (it.moveToNext()) unclassifiedDoctors.add(cursorToClient(it)) }
 
         val contactedDoctorsThisWeek = mutableListOf<DoctorMessageCount>()
-        val contactedQuery = """
-            SELECT c.*, COUNT(m.id) as msg_count 
-            FROM ${DatabaseHelper.TABLE_CLIENTS} c 
-            INNER JOIN ${DatabaseHelper.TABLE_MESSAGE_LOGS} m ON c.id = m.client_id 
-            WHERE c.client_type = 'طبيب' AND m.timestamp >= ? 
-            GROUP BY c.id
-        """.trimIndent()
-        db.rawQuery(contactedQuery, arrayOf(startOfWeek.toString())).use {
-            while (it.moveToNext()) {
-                val client = cursorToClient(it)
-                val count = it.getInt(it.getColumnIndexOrThrow("msg_count"))
-                contactedDoctorsThisWeek.add(DoctorMessageCount(client, count))
-            }
-        }
+        db.rawQuery("""
+            SELECT c.*, COUNT(m.id) as msg_count FROM ${DatabaseHelper.TABLE_CLIENTS} c
+            INNER JOIN ${DatabaseHelper.TABLE_MESSAGE_LOGS} m ON c.id = m.client_id
+            WHERE c.client_type = 'طبيب' AND m.timestamp >= ? GROUP BY c.id ORDER BY msg_count DESC
+        """.trimIndent(), arrayOf(startOfWeek.toString())).use { while (it.moveToNext()) contactedDoctorsThisWeek.add(DoctorMessageCount(cursorToClient(it), it.getInt(it.getColumnIndexOrThrow("msg_count")))) }
 
         val uncontactedDoctorsThisWeek = mutableListOf<Client>()
-        val uncontactedQuery = """
-            SELECT * FROM ${DatabaseHelper.TABLE_CLIENTS} WHERE client_type = 'طبيب' AND id NOT IN (
-                SELECT DISTINCT client_id FROM ${DatabaseHelper.TABLE_MESSAGE_LOGS} WHERE timestamp >= ?
-            )
-        """.trimIndent()
-        db.rawQuery(uncontactedQuery, arrayOf(startOfWeek.toString())).use {
-            while (it.moveToNext()) {
-                uncontactedDoctorsThisWeek.add(cursorToClient(it))
-            }
-        }
+        db.rawQuery("""
+            SELECT * FROM ${DatabaseHelper.TABLE_CLIENTS} WHERE client_type = 'طبيب' AND id NOT IN
+            (SELECT DISTINCT client_id FROM ${DatabaseHelper.TABLE_MESSAGE_LOGS} WHERE timestamp >= ?) LIMIT 30
+        """.trimIndent(), arrayOf(startOfWeek.toString())).use { while (it.moveToNext()) uncontactedDoctorsThisWeek.add(cursorToClient(it)) }
+
+        val topContactedDoctors = mutableListOf<DoctorMessageCount>()
+        db.rawQuery("""
+            SELECT c.*, COUNT(m.id) as msg_count FROM ${DatabaseHelper.TABLE_CLIENTS} c
+            INNER JOIN ${DatabaseHelper.TABLE_MESSAGE_LOGS} m ON c.id = m.client_id
+            WHERE c.client_type = 'طبيب' GROUP BY c.id ORDER BY msg_count DESC LIMIT 5
+        """.trimIndent(), null).use { while (it.moveToNext()) topContactedDoctors.add(DoctorMessageCount(cursorToClient(it), it.getInt(it.getColumnIndexOrThrow("msg_count")))) }
+
+        val overdueDoctors = mutableListOf<Client>()
+        db.rawQuery("""
+            SELECT * FROM ${DatabaseHelper.TABLE_CLIENTS} WHERE client_type = 'طبيب' AND id NOT IN
+            (SELECT DISTINCT client_id FROM ${DatabaseHelper.TABLE_MESSAGE_LOGS} WHERE timestamp >= ?) LIMIT 10
+        """.trimIndent(), arrayOf(startOfMonth.toString())).use { while (it.moveToNext()) overdueDoctors.add(cursorToClient(it)) }
+
+        var totalCampaigns = 0; var totalCampaignTargets = 0; var totalCampaignOpened = 0
+        var textOnlyCampaigns = 0; var attachmentOnlyCampaigns = 0; var textAndAttachmentCampaigns = 0
+        db.rawQuery("SELECT COUNT(*), COALESCE(SUM(target_count),0), COALESCE(SUM(sent_count),0) FROM ${DatabaseHelper.TABLE_MESSAGE_CAMPAIGNS}", null).use { if (it.moveToFirst()) { totalCampaigns = it.getInt(0); totalCampaignTargets = it.getInt(1); totalCampaignOpened = it.getInt(2) } }
+        db.rawQuery("SELECT message_mode, COUNT(*) FROM ${DatabaseHelper.TABLE_MESSAGE_CAMPAIGNS} GROUP BY message_mode", null).use { while (it.moveToNext()) when (it.getString(0) ?: "") { "TEXT_ONLY" -> textOnlyCampaigns = it.getInt(1); "ATTACHMENT_ONLY" -> attachmentOnlyCampaigns = it.getInt(1); "TEXT_AND_ATTACHMENT" -> textAndAttachmentCampaigns = it.getInt(1) } }
 
         DashboardAnalytics(
-            totalClassifiedDoctors = totalClassifiedDoctors,
-            unclassifiedDoctors = unclassifiedDoctors,
-            contactedDoctorsThisWeek = contactedDoctorsThisWeek,
-            uncontactedDoctorsThisWeek = uncontactedDoctorsThisWeek
+            totalClassifiedDoctors, unclassifiedDoctors, contactedDoctorsThisWeek, uncontactedDoctorsThisWeek,
+            totalDoctors, totalClients, totalCampaigns, totalCampaignTargets, totalCampaignOpened, weeklyMessages, monthlyMessages,
+            textOnlyCampaigns, attachmentOnlyCampaigns, textAndAttachmentCampaigns, topContactedDoctors, overdueDoctors,
+            groupedStats(db, "specialization", 6), groupedStats(db, "location", 6), getRecentCampaignsInternal(db, 5)
         )
+    }
+
+    private fun countQuery(db: SQLiteDatabase, sql: String, args: Array<String>? = null): Int { db.rawQuery(sql, args).use { return if (it.moveToFirst()) it.getInt(0) else 0 } }
+    private fun groupedStats(db: SQLiteDatabase, column: String, limit: Int): List<StatItem> {
+        val list = mutableListOf<StatItem>()
+        db.rawQuery("SELECT $column, COUNT(*) FROM ${DatabaseHelper.TABLE_CLIENTS} WHERE client_type = 'طبيب' AND $column IS NOT NULL AND $column != '' GROUP BY $column ORDER BY COUNT(*) DESC LIMIT $limit", null).use { while (it.moveToNext()) list.add(StatItem(it.getString(0) ?: "غير محدد", it.getInt(1))) }
+        return list
+    }
+    private fun getRecentCampaignsInternal(db: SQLiteDatabase, limit: Int): List<MessageCampaign> {
+        val list = mutableListOf<MessageCampaign>()
+        db.query(DatabaseHelper.TABLE_MESSAGE_CAMPAIGNS, null, null, null, null, null, "date_created DESC", limit.toString()).use { while (it.moveToNext()) list.add(MessageCampaign(id = it.getLong(it.getColumnIndexOrThrow("id")), title = it.getString(it.getColumnIndexOrThrow("title")) ?: "", targetCount = it.getInt(it.getColumnIndexOrThrow("target_count")), sentCount = it.getInt(it.getColumnIndexOrThrow("sent_count")), messageMode = it.getString(it.getColumnIndexOrThrow("message_mode")) ?: "TEXT_ONLY", attachmentName = it.getString(it.getColumnIndexOrThrow("attachment_name")) ?: "", dateCreated = it.getLong(it.getColumnIndexOrThrow("date_created")))) }
+        return list
     }
 
     private fun cursorToClient(cursor: Cursor): Client {

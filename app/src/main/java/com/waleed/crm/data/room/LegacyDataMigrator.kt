@@ -2,6 +2,7 @@ package com.waleed.crm.data.room
 
 import android.content.Context
 import android.database.Cursor
+import android.database.sqlite.SQLiteDatabase
 import com.waleed.crm.data.DatabaseHelper
 import com.waleed.crm.data.SeedData
 import kotlinx.coroutines.Dispatchers
@@ -9,13 +10,62 @@ import kotlinx.coroutines.withContext
 import androidx.room.withTransaction
 
 /**
- * Phase 23 bridge: copies the user's historical SQLiteOpenHelper data into the Room store once.
- * After this step CrmRepository reads/writes Room only; SQLiteOpenHelper is opened only when an
- * existing legacy database file is detected and only for this one-time data import.
+ * Phase 24 legacy bridge: SQLiteOpenHelper is no longer part of normal reads/writes.
+ * It is opened only once, only when a historical SQLite database exists and the Room migration
+ * marker is still missing. The migration then validates table counts and writes an audit record.
  */
 object LegacyDataMigrator {
     private const val PREFS = "waleed_room_migration"
     private const val KEY_DONE = "phase23_sqlite_to_room_done_v1"
+    private const val KEY_STATUS = "phase24_integrity_status"
+    private const val KEY_DETAILS = "phase24_integrity_details"
+    private const val KEY_COMPLETED_AT = "phase24_completed_at"
+
+    data class TableCounts(
+        val clients: Int = 0,
+        val specializations: Int = 0,
+        val locations: Int = 0,
+        val pharmacies: Int = 0,
+        val galleryFiles: Int = 0,
+        val messageTemplates: Int = 0,
+        val messageLogs: Int = 0,
+        val messageCampaigns: Int = 0,
+        val followUps: Int = 0,
+        val users: Int = 0,
+        val auditLogs: Int = 0,
+        val savedSegments: Int = 0
+    ) {
+        fun comparableWithoutAudit(): Map<String, Int> = mapOf(
+            "clients" to clients,
+            "specializations" to specializations,
+            "locations" to locations,
+            "pharmacies" to pharmacies,
+            "gallery_files" to galleryFiles,
+            "message_templates" to messageTemplates,
+            "message_logs" to messageLogs,
+            "message_campaigns" to messageCampaigns,
+            "follow_ups" to followUps,
+            "users" to users,
+            "saved_segments" to savedSegments
+        )
+    }
+
+    data class MigrationStatus(
+        val completed: Boolean,
+        val status: String,
+        val details: String,
+        val completedAt: Long
+    )
+
+    fun status(context: Context): MigrationStatus {
+        val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        return MigrationStatus(
+            completed = prefs.getBoolean(KEY_DONE, false),
+            status = prefs.getString(KEY_STATUS, "PENDING") ?: "PENDING",
+            details = prefs.getString(KEY_DETAILS, "") ?: "",
+            completedAt = prefs.getLong(KEY_COMPLETED_AT, 0L)
+        )
+    }
 
     suspend fun migrateIfNeeded(context: Context, db: WaleedRoomDatabase) = withContext(Dispatchers.IO) {
         val appContext = context.applicationContext
@@ -25,27 +75,108 @@ object LegacyDataMigrator {
         val legacyPath = appContext.getDatabasePath(DatabaseHelper.DATABASE_NAME)
         if (!legacyPath.exists()) {
             seedFreshRoomDatabase(db)
-            prefs.edit().putBoolean(KEY_DONE, true).apply()
+            val roomCounts = roomCounts(db)
+            val details = "Fresh Room seed completed: $roomCounts"
+            db.auditDao().insert(AuditLogEntity(action = "ROOM_FRESH_SEED", entityType = "DATABASE", details = details))
+            prefs.edit()
+                .putBoolean(KEY_DONE, true)
+                .putString(KEY_STATUS, "SEEDED")
+                .putString(KEY_DETAILS, details)
+                .putLong(KEY_COMPLETED_AT, System.currentTimeMillis())
+                .apply()
             return@withContext
         }
 
         val legacy = DatabaseHelper(appContext).readableDatabase
-        db.withTransaction {
-            db.catalogDao().insertSpecializations(readSpecializations(legacy.query(DatabaseHelper.TABLE_SPECIALIZATIONS, null, null, null, null, null, null)))
-            db.catalogDao().insertLocations(readLocations(legacy.query(DatabaseHelper.TABLE_LOCATIONS, null, null, null, null, null, null)))
-            db.clientDao().insertAll(readClients(legacy.query(DatabaseHelper.TABLE_CLIENTS, null, null, null, null, null, null)))
-            db.catalogDao().insertPharmacies(readPharmacies(legacy.query(DatabaseHelper.TABLE_PHARMACIES, null, null, null, null, null, null)))
-            db.galleryDao().insertAll(readGalleryFiles(legacy.query(DatabaseHelper.TABLE_GALLERY_FILES, null, null, null, null, null, null)))
-            db.messageDao().insertTemplates(readMessageTemplates(legacy.query(DatabaseHelper.TABLE_MESSAGE_TEMPLATES, null, null, null, null, null, null)))
-            db.messageDao().insertCampaigns(readMessageCampaigns(legacy.query(DatabaseHelper.TABLE_MESSAGE_CAMPAIGNS, null, null, null, null, null, null)))
-            db.messageDao().insertLogs(readMessageLogs(legacy.query(DatabaseHelper.TABLE_MESSAGE_LOGS, null, null, null, null, null, null)))
-            db.followUpDao().insertAll(readFollowUps(legacy.query(DatabaseHelper.TABLE_FOLLOW_UPS, null, null, null, null, null, null)))
-            db.userDao().insertAll(readUsers(legacy.query(DatabaseHelper.TABLE_USERS, null, null, null, null, null, null)))
-            db.auditDao().insertAll(readAuditLogs(legacy.query(DatabaseHelper.TABLE_AUDIT_LOGS, null, null, null, null, null, null)))
-            db.segmentDao().insertAll(readSegments(legacy.query(DatabaseHelper.TABLE_SAVED_SEGMENTS, null, null, null, null, null, null)))
+        val legacyCounts = legacyCounts(legacy)
+        try {
+            db.withTransaction {
+                db.catalogDao().insertSpecializations(readSpecializations(legacy.query(DatabaseHelper.TABLE_SPECIALIZATIONS, null, null, null, null, null, null)))
+                db.catalogDao().insertLocations(readLocations(legacy.query(DatabaseHelper.TABLE_LOCATIONS, null, null, null, null, null, null)))
+                db.clientDao().insertAll(readClients(legacy.query(DatabaseHelper.TABLE_CLIENTS, null, null, null, null, null, null)))
+                db.catalogDao().insertPharmacies(readPharmacies(legacy.query(DatabaseHelper.TABLE_PHARMACIES, null, null, null, null, null, null)))
+                db.galleryDao().insertAll(readGalleryFiles(legacy.query(DatabaseHelper.TABLE_GALLERY_FILES, null, null, null, null, null, null)))
+                db.messageDao().insertTemplates(readMessageTemplates(legacy.query(DatabaseHelper.TABLE_MESSAGE_TEMPLATES, null, null, null, null, null, null)))
+                db.messageDao().insertCampaigns(readMessageCampaigns(legacy.query(DatabaseHelper.TABLE_MESSAGE_CAMPAIGNS, null, null, null, null, null, null)))
+                db.messageDao().insertLogs(readMessageLogs(legacy.query(DatabaseHelper.TABLE_MESSAGE_LOGS, null, null, null, null, null, null)))
+                db.followUpDao().insertAll(readFollowUps(legacy.query(DatabaseHelper.TABLE_FOLLOW_UPS, null, null, null, null, null, null)))
+                db.userDao().insertAll(readUsers(legacy.query(DatabaseHelper.TABLE_USERS, null, null, null, null, null, null)))
+                db.auditDao().insertAll(readAuditLogs(legacy.query(DatabaseHelper.TABLE_AUDIT_LOGS, null, null, null, null, null, null)))
+                db.segmentDao().insertAll(readSegments(legacy.query(DatabaseHelper.TABLE_SAVED_SEGMENTS, null, null, null, null, null, null)))
+            }
+            val roomCounts = roomCounts(db)
+            val mismatches = compareCounts(legacyCounts, roomCounts)
+            val status = if (mismatches.isEmpty()) "OK" else "MISMATCH"
+            val details = if (mismatches.isEmpty()) {
+                "SQLite to Room integrity check passed. legacy=$legacyCounts room=$roomCounts"
+            } else {
+                "SQLite to Room integrity check mismatches: ${mismatches.joinToString()}. legacy=$legacyCounts room=$roomCounts"
+            }
+            db.auditDao().insert(AuditLogEntity(action = "ROOM_MIGRATION_$status", entityType = "DATABASE", details = details))
+            prefs.edit()
+                .putBoolean(KEY_DONE, true)
+                .putString(KEY_STATUS, status)
+                .putString(KEY_DETAILS, details)
+                .putLong(KEY_COMPLETED_AT, System.currentTimeMillis())
+                .apply()
+        } catch (t: Throwable) {
+            val details = "SQLite to Room migration failed: ${t.message ?: t::class.java.simpleName}"
+            db.auditDao().insert(AuditLogEntity(action = "ROOM_MIGRATION_FAILED", entityType = "DATABASE", details = details))
+            prefs.edit()
+                .putString(KEY_STATUS, "FAILED")
+                .putString(KEY_DETAILS, details)
+                .putLong(KEY_COMPLETED_AT, System.currentTimeMillis())
+                .apply()
+            throw t
+        } finally {
+            legacy.close()
         }
-        legacy.close()
-        prefs.edit().putBoolean(KEY_DONE, true).apply()
+    }
+
+    private fun compareCounts(legacy: TableCounts, room: TableCounts): List<String> {
+        val legacyMap = legacy.comparableWithoutAudit()
+        val roomMap = room.comparableWithoutAudit()
+        return legacyMap.keys.mapNotNull { key ->
+            val legacyCount = legacyMap[key] ?: 0
+            val roomCount = roomMap[key] ?: 0
+            if (legacyCount == roomCount) null else "$key legacy=$legacyCount room=$roomCount"
+        }
+    }
+
+    private fun legacyCounts(db: SQLiteDatabase) = TableCounts(
+        clients = countTable(db, DatabaseHelper.TABLE_CLIENTS),
+        specializations = countTable(db, DatabaseHelper.TABLE_SPECIALIZATIONS),
+        locations = countTable(db, DatabaseHelper.TABLE_LOCATIONS),
+        pharmacies = countTable(db, DatabaseHelper.TABLE_PHARMACIES),
+        galleryFiles = countTable(db, DatabaseHelper.TABLE_GALLERY_FILES),
+        messageTemplates = countTable(db, DatabaseHelper.TABLE_MESSAGE_TEMPLATES),
+        messageLogs = countTable(db, DatabaseHelper.TABLE_MESSAGE_LOGS),
+        messageCampaigns = countTable(db, DatabaseHelper.TABLE_MESSAGE_CAMPAIGNS),
+        followUps = countTable(db, DatabaseHelper.TABLE_FOLLOW_UPS),
+        users = countTable(db, DatabaseHelper.TABLE_USERS),
+        auditLogs = countTable(db, DatabaseHelper.TABLE_AUDIT_LOGS),
+        savedSegments = countTable(db, DatabaseHelper.TABLE_SAVED_SEGMENTS)
+    )
+
+    private suspend fun roomCounts(db: WaleedRoomDatabase) = TableCounts(
+        clients = db.clientDao().count(),
+        specializations = db.catalogDao().countSpecializations(),
+        locations = db.catalogDao().countLocations(),
+        pharmacies = db.catalogDao().countPharmacies(),
+        galleryFiles = db.galleryDao().count(),
+        messageTemplates = db.messageDao().countTemplates(),
+        messageLogs = db.messageDao().countLogs(),
+        messageCampaigns = db.messageDao().countCampaigns(),
+        followUps = db.followUpDao().count(),
+        users = db.userDao().count(),
+        auditLogs = db.auditDao().count(),
+        savedSegments = db.segmentDao().count()
+    )
+
+    private fun countTable(db: SQLiteDatabase, table: String): Int = try {
+        db.rawQuery("SELECT COUNT(*) FROM $table", null).use { if (it.moveToFirst()) it.getInt(0) else 0 }
+    } catch (_: Throwable) {
+        0
     }
 
     private suspend fun seedFreshRoomDatabase(db: WaleedRoomDatabase) {

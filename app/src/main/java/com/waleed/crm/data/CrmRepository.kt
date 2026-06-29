@@ -49,6 +49,7 @@ class CrmRepository(context: Context) {
     private val userDao = roomDb.userDao()
     private val auditDao = roomDb.auditDao()
     private val segmentDao = roomDb.segmentDao()
+    private val dashboardDao = roomDb.dashboardDao()
 
     private val migrationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val migration = migrationScope.async { LegacyDataMigrator.migrateIfNeeded(appContext, roomDb) }
@@ -73,14 +74,12 @@ class CrmRepository(context: Context) {
 
     suspend fun getDashboardAnalyticsFast(): DashboardAnalytics = withContext(Dispatchers.IO) {
         ensureMigrated()
-        val clients = clientDao.getAll().map { it.toModel() }
-        val pendingFollowUps = followUpDao.getPendingFollowUps().size
         DashboardAnalytics.Empty.copy(
-            totalClients = clients.size,
-            totalDoctors = clients.count { it.clientType == "طبيب" },
-            weeklyMessages = pendingFollowUps,
-            specializationStats = groupedStats(clients, { it.specialization }, 5),
-            locationStats = groupedStats(clients, { it.location }, 5)
+            totalClients = dashboardDao.totalClients(),
+            totalDoctors = dashboardDao.totalDoctors(),
+            weeklyMessages = dashboardDao.pendingFollowUpsCount(),
+            specializationStats = dashboardDao.specializationStats(5).map { StatItem(it.label, it.count) },
+            locationStats = dashboardDao.locationStats(5).map { StatItem(it.label, it.count) }
         )
     }
 
@@ -346,83 +345,54 @@ class CrmRepository(context: Context) {
         }.take(500)
     }
 
+    fun migrationStatus(): LegacyDataMigrator.MigrationStatus = LegacyDataMigrator.status(appContext)
+
     fun performanceArchitectureSummary(): List<String> = listOf(
-        "تم نقل واجهة CrmRepository لتقرأ وتكتب من Room/DAO فعلياً بدلاً من SQLiteOpenHelper.",
-        "تمت إضافة مرحلة ترحيل كاملة تنسخ بيانات SQLite الحالية إلى قاعدة Room مرة واحدة دون فقدان البيانات.",
-        "تم إلغاء fallbackToDestructiveMigration واستبداله بـ Migration رسمية من Room v1 إلى v2.",
-        "تم توسيع Room ليغطي العملاء، التخصصات، المواقع، الصيدليات، المعرض، الرسائل، الحملات، المتابعات، المستخدمين، التدقيق والشرائح."
+        "تم تثبيت Room كطبقة البيانات النشطة لكل الشاشات، مع منع SQLiteOpenHelper من العمل اليومي بعد اكتمال الترحيل.",
+        "تمت إضافة فحص سلامة بعد الترحيل يقارن أعداد الجداول المهمة ويسجل النتيجة في سجل التدقيق.",
+        "تم نقل Migration الرسمية إلى RoomMigrations.kt لتسهيل ترحيلات الإصدارات القادمة.",
+        "تم تحسين تحليلات Dashboard باستعلامات DAO مباشرة بدل تحميل كل البيانات والحساب في الذاكرة.",
+        "تم إصلاح القائمة الجانبية بإضافة تمرير رأسي حتى تظهر كل الصفحات على الشاشات الصغيرة."
     )
 
     suspend fun getDashboardAnalytics(): DashboardAnalytics = withContext(Dispatchers.IO) {
         ensureMigrated()
-        val clients = clientDao.getAll().map { it.toModel() }
-        val logs = messageDao.getAllLogs().map { it.toModel() }
-        val campaigns = messageDao.getCampaigns().map { it.toModel() }
-        val followUps = followUpDao.getPendingFollowUps().map { it.toModel() }
         val startOfWeek = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -7) }.timeInMillis
         val startOfMonth = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -30) }.timeInMillis
-
-        val doctors = clients.filter { it.clientType == "طبيب" }
-        val weeklyLogs = logs.filter { it.timestamp >= startOfWeek }
-        val monthlyLogs = logs.filter { it.timestamp >= startOfMonth }
-        val weeklyLogClientIds = weeklyLogs.map { it.clientId }.toSet()
-        val monthlyLogClientIds = monthlyLogs.map { it.clientId }.toSet()
-        val logCountsByClient = logs.groupingBy { it.clientId }.eachCount()
-        val weeklyCountsByClient = weeklyLogs.groupingBy { it.clientId }.eachCount()
-
-        val totalClassifiedDoctors = doctors.count { it.isClassified && it.specialization.isNotBlank() && it.location.isNotBlank() }
-        val unclassifiedDoctors = doctors.filter { !it.isClassified || it.specialization.isBlank() || it.location.isBlank() }.take(20)
-        val contactedDoctorsThisWeek = doctors.filter { it.id in weeklyLogClientIds }
-            .map { DoctorMessageCount(it, weeklyCountsByClient[it.id] ?: 0) }
-            .sortedByDescending { it.messageCount }
-        val uncontactedDoctorsThisWeek = doctors.filter { it.id !in weeklyLogClientIds }.take(30)
-        val topContactedDoctors = doctors.map { DoctorMessageCount(it, logCountsByClient[it.id] ?: 0) }
-            .filter { it.messageCount > 0 }
-            .sortedByDescending { it.messageCount }
-            .take(5)
-        val overdueDoctors = doctors.filter { it.id !in monthlyLogClientIds }.take(10)
+        val campaignTotals = dashboardDao.campaignTotals()
 
         var textOnlyCampaigns = 0
         var attachmentOnlyCampaigns = 0
         var textAndAttachmentCampaigns = 0
-        campaigns.groupingBy { it.messageMode }.eachCount().forEach { (mode, count) ->
-            when (mode) {
-                "TEXT_ONLY" -> textOnlyCampaigns = count
-                "ATTACHMENT_ONLY" -> attachmentOnlyCampaigns = count
-                "TEXT_AND_ATTACHMENT" -> textAndAttachmentCampaigns = count
+        dashboardDao.campaignModeCounts().forEach { item ->
+            when (item.messageMode) {
+                "TEXT_ONLY" -> textOnlyCampaigns = item.count
+                "ATTACHMENT_ONLY" -> attachmentOnlyCampaigns = item.count
+                "TEXT_AND_ATTACHMENT" -> textAndAttachmentCampaigns = item.count
             }
         }
 
         DashboardAnalytics(
-            totalClassifiedDoctors = totalClassifiedDoctors,
-            unclassifiedDoctors = unclassifiedDoctors,
-            contactedDoctorsThisWeek = contactedDoctorsThisWeek,
-            uncontactedDoctorsThisWeek = uncontactedDoctorsThisWeek,
-            totalDoctors = doctors.size,
-            totalClients = clients.size,
-            totalCampaigns = campaigns.size,
-            totalCampaignTargets = campaigns.sumOf { it.targetCount },
-            totalCampaignOpened = campaigns.sumOf { it.sentCount },
-            weeklyMessages = weeklyLogs.size,
-            monthlyMessages = monthlyLogs.size,
+            totalClassifiedDoctors = dashboardDao.totalClassifiedDoctors(),
+            unclassifiedDoctors = dashboardDao.unclassifiedDoctors(20).map { it.toModel() },
+            contactedDoctorsThisWeek = dashboardDao.contactedDoctorsSince(startOfWeek).map { DoctorMessageCount(it.client.toModel(), it.messageCount) },
+            uncontactedDoctorsThisWeek = dashboardDao.uncontactedDoctorsSince(startOfWeek, 30).map { it.toModel() },
+            totalDoctors = dashboardDao.totalDoctors(),
+            totalClients = dashboardDao.totalClients(),
+            totalCampaigns = campaignTotals.totalCampaigns,
+            totalCampaignTargets = campaignTotals.totalTargets,
+            totalCampaignOpened = campaignTotals.totalOpened,
+            weeklyMessages = dashboardDao.countMessagesSince(startOfWeek),
+            monthlyMessages = dashboardDao.countMessagesSince(startOfMonth),
             textOnlyCampaigns = textOnlyCampaigns,
             attachmentOnlyCampaigns = attachmentOnlyCampaigns,
             textAndAttachmentCampaigns = textAndAttachmentCampaigns,
-            topContactedDoctors = topContactedDoctors,
-            overdueDoctors = overdueDoctors,
-            specializationStats = groupedStats(clients, { it.specialization }, 6),
-            locationStats = groupedStats(clients, { it.location }, 6),
-            recentCampaigns = campaigns.take(5)
+            topContactedDoctors = dashboardDao.topContactedDoctors(5).map { DoctorMessageCount(it.client.toModel(), it.messageCount) },
+            overdueDoctors = dashboardDao.overdueDoctors(startOfMonth, 10).map { it.toModel() },
+            specializationStats = dashboardDao.specializationStats(6).map { StatItem(it.label, it.count) },
+            locationStats = dashboardDao.locationStats(6).map { StatItem(it.label, it.count) },
+            recentCampaigns = dashboardDao.recentCampaigns(5).map { it.toModel() }
         )
     }
 
-    private fun groupedStats(clients: List<Client>, selector: (Client) -> String, limit: Int): List<StatItem> =
-        clients.map(selector)
-            .filter { it.isNotBlank() }
-            .groupingBy { it }
-            .eachCount()
-            .entries
-            .sortedByDescending { it.value }
-            .take(limit)
-            .map { StatItem(it.key, it.value) }
 }

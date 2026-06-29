@@ -2,6 +2,8 @@ package com.waleed.crm.ui.navigation
 
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Analytics
@@ -76,7 +78,7 @@ fun AppNavigation(
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            ModalDrawerSheet {
+            ModalDrawerSheet(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Text("Waleed CRM", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(18.dp))
                 Text("القائمة الرئيسية", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp))
                 items.forEach { item ->

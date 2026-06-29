@@ -13,8 +13,8 @@ android {
         applicationId = "com.waleed.crm"
         minSdk = 26
         targetSdk = 34
-        versionCode = 28
-        versionName = "3.7"
+        versionCode = 29
+        versionName = "3.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -58,6 +58,13 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+    }
+}
+
+kapt {
+    arguments {
+        arg("room.schemaLocation", "$projectDir/schemas")
+        arg("room.incremental", "true")
     }
 }
 

@@ -406,6 +406,35 @@ class CrmRepository(context: Context) {
         list
     }
 
+    suspend fun restoreClients(clients: List<Client>, replaceExisting: Boolean): Pair<Int, Int> = withContext(Dispatchers.IO) {
+        val db = dbHelper.writableDatabase
+        if (replaceExisting) {
+            db.delete(DatabaseHelper.TABLE_CLIENTS, null, null)
+        }
+        var inserted = 0
+        var skipped = 0
+        for (client in clients) {
+            val normalized = client.normalizedForSaving().copy(id = 0, isClassified = true)
+            val duplicate = findDuplicateClient(normalized)
+            if (!replaceExisting && duplicate != null) {
+                skipped++
+            } else {
+                insertClient(normalized)
+                inserted++
+            }
+        }
+        inserted to skipped
+    }
+
+    fun exportReportsBundle(clients: List<Client>, logs: List<MessageLog>, campaigns: List<MessageCampaign>, followUps: List<FollowUpWithClient>): String = buildString {
+        appendLine("Waleed CRM Reports")
+        appendLine("==================")
+        appendLine("إجمالي العملاء/الأطباء: ${clients.size}")
+        appendLine("إجمالي الرسائل: ${logs.size}")
+        appendLine("إجمالي الحملات: ${campaigns.size}")
+        appendLine("المتابعات المعلقة: ${followUps.size}")
+    }
+
     suspend fun getDashboardAnalytics(): DashboardAnalytics = withContext(Dispatchers.IO) {
         val db = dbHelper.readableDatabase
         val startOfWeek = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -7) }.timeInMillis

@@ -9,7 +9,7 @@ class CrmViewModelFactory(private val context: Context) : ViewModelProvider.Fact
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(CrmViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return CrmViewModel(CrmRepository(context.applicationContext)) as T
+            return CrmViewModel(CrmRepository(context.applicationContext), context.applicationContext) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }

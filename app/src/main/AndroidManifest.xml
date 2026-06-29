@@ -25,6 +25,8 @@
             </intent-filter>
         </activity>
 
+        <receiver android:name=".reminders.FollowUpReminderReceiver" android:exported="false" />
+
         <receiver android:name=".receiver.CallReceiver" android:exported="true" android:permission="android.permission.READ_PHONE_STATE">
             <intent-filter>
                 <action android:name="android.intent.action.PHONE_STATE" />

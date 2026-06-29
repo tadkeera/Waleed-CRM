@@ -9,6 +9,8 @@ import androidx.compose.material.icons.filled.Contacts
 import androidx.compose.material.icons.filled.ImportExport
 import androidx.compose.material.icons.filled.MedicalServices
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Assessment
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -23,6 +25,7 @@ import androidx.navigation.navArgument
 import com.waleed.crm.ui.screens.*
 import com.waleed.crm.ui.viewmodel.CrmViewModel
 import com.waleed.crm.security.PrivacyScreen
+import com.waleed.crm.security.SecuritySettingsScreen
 
 sealed class BottomNavItem(val route: String, val title: String, val icon: ImageVector) {
     object Contacts : BottomNavItem("contacts_list", "قائمة الأسماء", Icons.Default.Contacts)
@@ -31,6 +34,8 @@ sealed class BottomNavItem(val route: String, val title: String, val icon: Image
     object Dashboard : BottomNavItem("analytics_dashboard", "داشبورد تحليلي", Icons.Default.Analytics)
     object ImportExport : BottomNavItem("import_export", "استيراد/تصدير", Icons.Default.ImportExport)
     object FollowUps : BottomNavItem("follow_ups", "المتابعات", Icons.Default.Notifications)
+    object Reports : BottomNavItem("reports", "التقارير", Icons.Default.Assessment)
+    object Security : BottomNavItem("security_settings", "الأمان", Icons.Default.Security)
 }
 
 @Composable
@@ -43,7 +48,7 @@ fun AppNavigation(
         bottomBar = {
             val navBackStackEntry by navController.currentBackStackEntryAsState()
             val currentRoute = navBackStackEntry?.destination?.route
-            val items = listOf(BottomNavItem.Contacts, BottomNavItem.Doctors, BottomNavItem.Gallery, BottomNavItem.Dashboard, BottomNavItem.ImportExport, BottomNavItem.FollowUps)
+            val items = listOf(BottomNavItem.Contacts, BottomNavItem.Doctors, BottomNavItem.Gallery, BottomNavItem.Dashboard, BottomNavItem.ImportExport, BottomNavItem.FollowUps, BottomNavItem.Reports, BottomNavItem.Security)
 
             if (currentRoute in items.map { it.route }) {
                 NavigationBar {
@@ -89,6 +94,12 @@ fun AppNavigation(
             }
             composable(BottomNavItem.FollowUps.route) {
                 FollowUpsScreen(viewModel = viewModel, navController = navController)
+            }
+            composable(BottomNavItem.Reports.route) {
+                ReportsScreen(viewModel = viewModel, navController = navController)
+            }
+            composable(BottomNavItem.Security.route) {
+                SecuritySettingsScreen(navController = navController)
             }
             composable(
                 route = "add_edit_client/{clientId}?phone={phone}",

@@ -7,8 +7,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
+import com.waleed.crm.reminders.FollowUpReminderScheduler
 
-class CrmViewModel(private val repository: CrmRepository) : ViewModel() {
+class CrmViewModel(private val repository: CrmRepository, private val appContext: android.content.Context? = null) : ViewModel() {
 
     private val _clients = MutableStateFlow<List<Client>>(emptyList())
     val clients: StateFlow<List<Client>> = _clients
@@ -70,6 +71,7 @@ class CrmViewModel(private val repository: CrmRepository) : ViewModel() {
             _messageCampaigns.value = campaignsDeferred.await()
             _dashboardAnalytics.value = analyticsDeferred.await()
             _followUps.value = followUpsDeferred.await()
+            reschedulePendingReminders(_followUps.value)
             hasLoadedInitialData = true
             _isLoading.value = false
         }
@@ -89,7 +91,10 @@ class CrmViewModel(private val repository: CrmRepository) : ViewModel() {
     }
 
     fun refreshFollowUps() {
-        viewModelScope.launch { _followUps.value = repository.getPendingFollowUps() }
+        viewModelScope.launch {
+            _followUps.value = repository.getPendingFollowUps()
+            reschedulePendingReminders(_followUps.value)
+        }
     }
 
     fun getFollowUpsByClientId(clientId: Long, onResult: (List<FollowUp>) -> Unit) {
@@ -99,8 +104,9 @@ class CrmViewModel(private val repository: CrmRepository) : ViewModel() {
     fun addFollowUp(clientId: Long, title: String, dueAt: Long, notes: String = "", onComplete: () -> Unit = {}) {
         if (clientId == 0L || title.isBlank()) return
         viewModelScope.launch {
-            repository.insertFollowUp(FollowUp(clientId = clientId, title = title, dueAt = dueAt, notes = notes))
+            val id = repository.insertFollowUp(FollowUp(clientId = clientId, title = title, dueAt = dueAt, notes = notes))
             _followUps.value = repository.getPendingFollowUps()
+            _followUps.value.firstOrNull { it.followUp.id == id }?.let { item -> appContext?.let { FollowUpReminderScheduler.schedule(it, item) } }
             onComplete()
         }
     }
@@ -108,6 +114,7 @@ class CrmViewModel(private val repository: CrmRepository) : ViewModel() {
     fun completeFollowUp(id: Long) {
         viewModelScope.launch {
             repository.updateFollowUpStatus(id, "DONE")
+            appContext?.let { FollowUpReminderScheduler.cancel(it, id) }
             _followUps.value = repository.getPendingFollowUps()
         }
     }
@@ -115,6 +122,7 @@ class CrmViewModel(private val repository: CrmRepository) : ViewModel() {
     fun deleteFollowUp(id: Long) {
         viewModelScope.launch {
             repository.deleteFollowUp(id)
+            appContext?.let { FollowUpReminderScheduler.cancel(it, id) }
             _followUps.value = repository.getPendingFollowUps()
         }
     }
@@ -261,6 +269,20 @@ class CrmViewModel(private val repository: CrmRepository) : ViewModel() {
         }
         result.add(current.toString())
         return result
+    }
+
+    fun restoreClientsFromBackup(clients: List<Client>, replaceExisting: Boolean, onComplete: (inserted: Int, skipped: Int) -> Unit) {
+        viewModelScope.launch {
+            val result = repository.restoreClients(clients, replaceExisting)
+            refreshClientsAndLookups()
+            onComplete(result.first, result.second)
+        }
+    }
+
+    private fun reschedulePendingReminders(items: List<FollowUpWithClient>) {
+        val context = appContext ?: return
+        FollowUpReminderScheduler.ensureChannel(context)
+        items.forEach { FollowUpReminderScheduler.schedule(context, it) }
     }
 
     fun logBulkMessages(clientIds: List<Long>) {

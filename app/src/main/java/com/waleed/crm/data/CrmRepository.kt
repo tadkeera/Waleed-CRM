@@ -34,6 +34,8 @@ data class DashboardAnalytics(
 
 class CrmRepository(context: Context) {
     private val dbHelper = DatabaseHelper(context)
+    private val roomDb = com.waleed.crm.data.room.WaleedRoomDatabase.getInstance(context)
+    val modules = com.waleed.crm.data.repository.RepositoryModuleSet.fromRoom(roomDb)
 
     private val colorsPool = listOf(
         "#E57373", "#81C784", "#64B5F6", "#BA68C8",
@@ -52,6 +54,34 @@ class CrmRepository(context: Context) {
         }
         list
     }
+
+
+    suspend fun getClientsPage(limit: Int = 50, offset: Int = 0): List<Client> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<Client>()
+        val db = dbHelper.readableDatabase
+        db.query(DatabaseHelper.TABLE_CLIENTS, null, null, null, null, null, "name ASC", "$offset,$limit").use {
+            while (it.moveToNext()) list.add(cursorToClient(it))
+        }
+        list
+    }
+
+    suspend fun getDashboardAnalyticsFast(): DashboardAnalytics = withContext(Dispatchers.IO) {
+        // Fast dashboard path: counts + short lists only, to keep opening dashboard smooth on large databases.
+        val db = dbHelper.readableDatabase
+        val totalClients = countQuery(db, "SELECT COUNT(*) FROM ${DatabaseHelper.TABLE_CLIENTS}")
+        val totalDoctors = countQuery(db, "SELECT COUNT(*) FROM ${DatabaseHelper.TABLE_CLIENTS} WHERE client_type = 'طبيب'")
+        val pendingFollowUps = countQuery(db, "SELECT COUNT(*) FROM ${DatabaseHelper.TABLE_FOLLOW_UPS} WHERE status = 'PENDING'")
+        DashboardAnalytics.Empty.copy(
+            totalClients = totalClients,
+            totalDoctors = totalDoctors,
+            weeklyMessages = pendingFollowUps,
+            specializationStats = groupedStats(db, "specialization", 5),
+            locationStats = groupedStats(db, "location", 5)
+        )
+    }
+
+    fun observeClientsPage(page: Int, pageSize: Int) = modules.clients.observePage(page, pageSize)
+    fun observeSmartSearch(query: String, limit: Int = 100) = modules.clients.search(query, limit)
 
     suspend fun getClientById(id: Long): Client? = withContext(Dispatchers.IO) {
         val db = dbHelper.readableDatabase
@@ -534,9 +564,9 @@ class CrmRepository(context: Context) {
 
     fun performanceArchitectureSummary(): List<String> = listOf(
         "تم تثبيت فهارس بحث إضافية على النوع/التخصص/المنطقة/التصنيف.",
-        "تم فصل وظائف جديدة منطقياً: users, audit, segments, sync ضمن Repository مع قابلية نقلها لاحقاً إلى Room DAO.",
+        "تم إنشاء طبقة Entities وDAO وRoom Database وتقسيم Repository إلى وحدات Client/Messaging/FollowUp/User/Audit/Segment.",
         "تم اعتماد تحميل محدود لسجل النشاط والبحث الذكي لتفادي الضغط على الذاكرة.",
-        "المرحلة القادمة التقنية يمكن أن تنقل هذه الجداول تدريجياً إلى Room بدون كسر قاعدة SQLite الحالية."
+        "تم الانتقال التدريجي إلى Room/DAO مع إبقاء واجهة CrmRepository كـ Facade توافقية لحماية بيانات المستخدم الحالية."
     )
 
     suspend fun getDashboardAnalytics(): DashboardAnalytics = withContext(Dispatchers.IO) {

@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collectLatest
 import com.waleed.crm.reminders.FollowUpReminderScheduler
 
 class CrmViewModel(private val repository: CrmRepository, private val appContext: android.content.Context? = null) : ViewModel() {
@@ -54,6 +56,13 @@ class CrmViewModel(private val repository: CrmRepository, private val appContext
     private val _smartSearchResults = MutableStateFlow<List<Client>>(emptyList())
     val smartSearchResults: StateFlow<List<Client>> = _smartSearchResults
 
+
+    private val _pagedClients = MutableStateFlow<List<Client>>(emptyList())
+    val pagedClients: StateFlow<List<Client>> = _pagedClients
+    private var clientPage = 0
+    private val pageSize = 50
+    private var roomClientJob: Job? = null
+
     private var hasLoadedInitialData = false
 
     // State for Bulk WhatsApp Messaging Selection
@@ -80,6 +89,7 @@ class CrmViewModel(private val repository: CrmRepository, private val appContext
             val segmentsDeferred = async { repository.getSavedSegments() }
 
             _clients.value = clientsDeferred.await()
+            _pagedClients.value = _clients.value.take(pageSize)
             _specializations.value = specsDeferred.await()
             _locations.value = locationsDeferred.await()
             _galleryFiles.value = galleryDeferred.await()
@@ -94,6 +104,31 @@ class CrmViewModel(private val repository: CrmRepository, private val appContext
             hasLoadedInitialData = true
             _isLoading.value = false
         }
+    }
+
+
+    fun loadFirstClientsPage() {
+        clientPage = 0
+        viewModelScope.launch { _pagedClients.value = repository.getClientsPage(pageSize, 0) }
+    }
+
+    fun loadNextClientsPage() {
+        viewModelScope.launch {
+            clientPage += 1
+            val next = repository.getClientsPage(pageSize, clientPage * pageSize)
+            if (next.isNotEmpty()) _pagedClients.value = _pagedClients.value + next
+        }
+    }
+
+    fun observeRoomClientsPage(page: Int = 0) {
+        roomClientJob?.cancel()
+        roomClientJob = viewModelScope.launch {
+            repository.observeClientsPage(page, pageSize).collectLatest { _pagedClients.value = it }
+        }
+    }
+
+    fun refreshDashboardFast() {
+        viewModelScope.launch { _dashboardAnalytics.value = repository.getDashboardAnalyticsFast() }
     }
 
     fun refreshDashboardAnalytics() {

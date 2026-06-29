@@ -2,6 +2,7 @@ package com.waleed.crm.ui.navigation
 
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.Collections
@@ -17,8 +18,10 @@ import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.ManageSearch
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.NavHostController
@@ -51,40 +54,60 @@ sealed class BottomNavItem(val route: String, val title: String, val icon: Image
     object Performance : BottomNavItem("performance", "الأداء", Icons.Default.Speed)
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppNavigation(
     viewModel: CrmViewModel,
     initialRoute: String = BottomNavItem.Contacts.route,
     navController: NavHostController = rememberNavController()
 ) {
-    Scaffold(
-        bottomBar = {
-            val navBackStackEntry by navController.currentBackStackEntryAsState()
-            val currentRoute = navBackStackEntry?.destination?.route
-            val items = listOf(BottomNavItem.Contacts, BottomNavItem.Doctors, BottomNavItem.Dashboard, BottomNavItem.FollowUps, BottomNavItem.SmartSearch, BottomNavItem.Reports, BottomNavItem.Sync, BottomNavItem.Users, BottomNavItem.Audit, BottomNavItem.Security, BottomNavItem.Onboarding, BottomNavItem.Performance, BottomNavItem.ImportExport, BottomNavItem.Gallery)
+    val items = listOf(
+        BottomNavItem.Contacts, BottomNavItem.Doctors, BottomNavItem.Dashboard, BottomNavItem.FollowUps,
+        BottomNavItem.SmartSearch, BottomNavItem.Reports, BottomNavItem.Sync, BottomNavItem.Users,
+        BottomNavItem.Audit, BottomNavItem.Security, BottomNavItem.Onboarding, BottomNavItem.Performance,
+        BottomNavItem.ImportExport, BottomNavItem.Gallery
+    )
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+    val currentTitle = items.firstOrNull { it.route == currentRoute }?.title ?: "Waleed CRM"
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
 
-            if (currentRoute in items.map { it.route }) {
-                NavigationBar {
-                    items.forEach { item ->
-                        NavigationBarItem(
-                            icon = { Icon(item.icon, contentDescription = item.title) },
-                            label = { Text(item.title) },
-                            selected = currentRoute == item.route,
-                            onClick = {
-                                if (currentRoute != item.route) {
-                                    navController.navigate(item.route) {
-                                        popUpTo(navController.graph.startDestinationId) { saveState = true }
-                                        launchSingleTop = true
-                                        restoreState = true
-                                    }
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet {
+                Text("Waleed CRM", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(18.dp))
+                Text("القائمة الرئيسية", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp))
+                items.forEach { item ->
+                    NavigationDrawerItem(
+                        icon = { Icon(item.icon, contentDescription = item.title) },
+                        label = { Text(item.title) },
+                        selected = currentRoute == item.route,
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            if (currentRoute != item.route) {
+                                navController.navigate(item.route) {
+                                    popUpTo(navController.graph.startDestinationId) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
                                 }
                             }
-                        )
-                    }
+                        },
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+                    )
                 }
             }
         }
-    ) { paddingValues ->
+    ) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text(currentTitle) },
+                    navigationIcon = { IconButton(onClick = { scope.launch { drawerState.open() } }) { Icon(Icons.Default.Menu, contentDescription = "القائمة") } }
+                )
+            }
+        ) { paddingValues ->
         NavHost(
             navController = navController,
             startDestination = initialRoute,
@@ -175,4 +198,5 @@ fun AppNavigation(
             }
         }
     }
+}
 }

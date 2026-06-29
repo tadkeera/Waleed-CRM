@@ -13,8 +13,8 @@ android {
         applicationId = "com.waleed.crm"
         minSdk = 26
         targetSdk = 34
-        versionCode = 27
-        versionName = "3.6"
+        versionCode = 28
+        versionName = "3.7"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -85,4 +85,11 @@ dependencies {
 
     // Unit testing for core data utilities
     testImplementation("junit:junit:4.13.2")
+
+    // Instrumented Room coverage for Phase 23 migration/data-access validation
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:core:1.6.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.room:room-testing:2.6.1")
+    androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
 }

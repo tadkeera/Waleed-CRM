@@ -31,6 +31,43 @@ data class ClientEntity(
     val notes: String = ""
 )
 
+@Entity(tableName = "specializations", indices = [Index(value = ["name"], unique = true)])
+data class SpecializationEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val color: String
+)
+
+@Entity(tableName = "locations", indices = [Index(value = ["name"], unique = true)])
+data class LocationEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String
+)
+
+@Entity(tableName = "pharmacies", indices = [Index(value = ["client_id"]), Index(value = ["name"])])
+data class PharmacyEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    @ColumnInfo(name = "client_id") val clientId: Long
+)
+
+@Entity(tableName = "gallery_files", indices = [Index(value = ["date_added"]), Index(value = ["type"])])
+data class GalleryFileEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    @ColumnInfo(name = "file_path") val filePath: String,
+    val type: String,
+    @ColumnInfo(name = "date_added") val dateAdded: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "message_templates", indices = [Index(value = ["date_added"])])
+data class MessageTemplateEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val title: String,
+    val body: String,
+    @ColumnInfo(name = "date_added") val dateAdded: Long = System.currentTimeMillis()
+)
+
 @Entity(tableName = "message_logs", indices = [Index(value = ["client_id", "timestamp"]), Index(value = ["campaign_id"])])
 data class MessageLogEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,

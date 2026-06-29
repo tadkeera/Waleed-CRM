@@ -1,12 +1,16 @@
 package com.waleed.crm.data
 
-import android.content.ContentValues
 import android.content.Context
-import android.database.Cursor
-import android.database.sqlite.SQLiteDatabase
+import com.waleed.crm.data.repository.RepositoryModuleSet
+import com.waleed.crm.data.room.*
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.withContext
 import java.util.Calendar
+
 
 data class StatItem(val label: String, val count: Int)
 
@@ -33,9 +37,21 @@ data class DashboardAnalytics(
 ) { companion object { val Empty = DashboardAnalytics(0, emptyList(), emptyList(), emptyList()) } }
 
 class CrmRepository(context: Context) {
-    private val dbHelper = DatabaseHelper(context)
-    private val roomDb = com.waleed.crm.data.room.WaleedRoomDatabase.getInstance(context)
-    val modules = com.waleed.crm.data.repository.RepositoryModuleSet.fromRoom(roomDb)
+    private val appContext = context.applicationContext
+    private val roomDb = WaleedRoomDatabase.getInstance(appContext)
+    val modules = RepositoryModuleSet.fromRoom(roomDb)
+
+    private val clientDao = roomDb.clientDao()
+    private val catalogDao = roomDb.catalogDao()
+    private val galleryDao = roomDb.galleryDao()
+    private val messageDao = roomDb.messageDao()
+    private val followUpDao = roomDb.followUpDao()
+    private val userDao = roomDb.userDao()
+    private val auditDao = roomDb.auditDao()
+    private val segmentDao = roomDb.segmentDao()
+
+    private val migrationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val migration = migrationScope.async { LegacyDataMigrator.migrateIfNeeded(appContext, roomDb) }
 
     private val colorsPool = listOf(
         "#E57373", "#81C784", "#64B5F6", "#BA68C8",
@@ -43,415 +59,216 @@ class CrmRepository(context: Context) {
         "#FF8A65", "#9575CD", "#4DB6AC", "#DCE775"
     )
 
+    private suspend fun ensureMigrated() { migration.await() }
+
     suspend fun getAllClients(): List<Client> = withContext(Dispatchers.IO) {
-        val list = mutableListOf<Client>()
-        val db = dbHelper.readableDatabase
-        val cursor = db.query(DatabaseHelper.TABLE_CLIENTS, null, null, null, null, null, "name ASC")
-        cursor.use {
-            while (it.moveToNext()) {
-                list.add(cursorToClient(it))
-            }
-        }
-        list
+        ensureMigrated()
+        clientDao.getAll().map { it.toModel() }
     }
 
-
     suspend fun getClientsPage(limit: Int = 50, offset: Int = 0): List<Client> = withContext(Dispatchers.IO) {
-        val list = mutableListOf<Client>()
-        val db = dbHelper.readableDatabase
-        db.query(DatabaseHelper.TABLE_CLIENTS, null, null, null, null, null, "name ASC", "$offset,$limit").use {
-            while (it.moveToNext()) list.add(cursorToClient(it))
-        }
-        list
+        ensureMigrated()
+        clientDao.getPage(limit, offset).map { it.toModel() }
     }
 
     suspend fun getDashboardAnalyticsFast(): DashboardAnalytics = withContext(Dispatchers.IO) {
-        // Fast dashboard path: counts + short lists only, to keep opening dashboard smooth on large databases.
-        val db = dbHelper.readableDatabase
-        val totalClients = countQuery(db, "SELECT COUNT(*) FROM ${DatabaseHelper.TABLE_CLIENTS}")
-        val totalDoctors = countQuery(db, "SELECT COUNT(*) FROM ${DatabaseHelper.TABLE_CLIENTS} WHERE client_type = 'طبيب'")
-        val pendingFollowUps = countQuery(db, "SELECT COUNT(*) FROM ${DatabaseHelper.TABLE_FOLLOW_UPS} WHERE status = 'PENDING'")
+        ensureMigrated()
+        val clients = clientDao.getAll().map { it.toModel() }
+        val pendingFollowUps = followUpDao.getPendingFollowUps().size
         DashboardAnalytics.Empty.copy(
-            totalClients = totalClients,
-            totalDoctors = totalDoctors,
+            totalClients = clients.size,
+            totalDoctors = clients.count { it.clientType == "طبيب" },
             weeklyMessages = pendingFollowUps,
-            specializationStats = groupedStats(db, "specialization", 5),
-            locationStats = groupedStats(db, "location", 5)
+            specializationStats = groupedStats(clients, { it.specialization }, 5),
+            locationStats = groupedStats(clients, { it.location }, 5)
         )
     }
 
-    fun observeClientsPage(page: Int, pageSize: Int) = modules.clients.observePage(page, pageSize)
-    fun observeSmartSearch(query: String, limit: Int = 100) = modules.clients.search(query, limit)
+    fun observeClientsPage(page: Int, pageSize: Int) = modules.clients.observePage(page, pageSize).onStart { ensureMigrated() }
+    fun observeSmartSearch(query: String, limit: Int = 100) = modules.clients.search(query, limit).onStart { ensureMigrated() }
 
     suspend fun getClientById(id: Long): Client? = withContext(Dispatchers.IO) {
-        val db = dbHelper.readableDatabase
-        val cursor = db.query(DatabaseHelper.TABLE_CLIENTS, null, "id = ?", arrayOf(id.toString()), null, null, null)
-        cursor.use {
-            if (it.moveToFirst()) cursorToClient(it) else null
-        }
+        ensureMigrated()
+        clientDao.getById(id)?.toModel()
     }
 
     suspend fun getClientByPhone(phone: String): Client? = withContext(Dispatchers.IO) {
-        val db = dbHelper.readableDatabase
-        val cursor = db.query(DatabaseHelper.TABLE_CLIENTS, null, "phone LIKE ? OR second_phone LIKE ?", arrayOf("%$phone%", "%$phone%"), null, null, null)
-        cursor.use {
-            if (it.moveToFirst()) cursorToClient(it) else null
-        }
+        ensureMigrated()
+        clientDao.getByPhone(phone)?.toModel()
     }
 
     suspend fun insertClient(client: Client): Long = withContext(Dispatchers.IO) {
-        val normalizedClient = client.normalizedForSaving()
-        val db = dbHelper.writableDatabase
-        var cardColor = normalizedClient.cardColor
-        if (normalizedClient.clientType == "طبيب" && normalizedClient.specialization.isNotBlank()) {
-            val existingSpec = getSpecializationByName(normalizedClient.specialization)
-            if (existingSpec != null) {
-                cardColor = existingSpec.color
-            } else {
-                cardColor = colorsPool.random()
-                addSpecializationInternal(normalizedClient.specialization, cardColor)
-            }
-        }
-        if (normalizedClient.location.isNotBlank()) {
-            addLocationInternal(normalizedClient.location)
-        }
-
-        val cv = ContentValues().apply {
-            put("name", normalizedClient.name)
-            put("phone", normalizedClient.phone)
-            put("second_phone", normalizedClient.secondPhone)
-            put("client_type", normalizedClient.clientType)
-            put("specialization", normalizedClient.specialization)
-            put("client_class", normalizedClient.clientClass)
-            put("location", normalizedClient.location)
-            put("is_classified", if (normalizedClient.isClassified) 1 else 0)
-            put("card_color", cardColor)
-            put("date_added", normalizedClient.dateAdded)
-            put("updated_at", normalizedClient.updatedAt)
-            put("notes", normalizedClient.notes)
-        }
-        db.insert(DatabaseHelper.TABLE_CLIENTS, null, cv)
+        ensureMigrated()
+        val normalizedClient = prepareClientForRoom(client)
+        clientDao.upsert(normalizedClient.toEntity())
     }
 
     suspend fun updateClient(client: Client): Int = withContext(Dispatchers.IO) {
-        val normalizedClient = client.normalizedForSaving()
-        val db = dbHelper.writableDatabase
+        ensureMigrated()
+        val normalizedClient = prepareClientForRoom(client)
+        clientDao.update(normalizedClient.toEntity())
+    }
+
+    private suspend fun prepareClientForRoom(client: Client): Client {
+        var normalizedClient = client.normalizedForSaving()
         var cardColor = normalizedClient.cardColor
         if (normalizedClient.clientType == "طبيب" && normalizedClient.specialization.isNotBlank()) {
-            val existingSpec = getSpecializationByName(normalizedClient.specialization)
+            val existingSpec = catalogDao.getSpecializationByName(normalizedClient.specialization)
             if (existingSpec != null) {
                 cardColor = existingSpec.color
             } else {
                 cardColor = colorsPool.random()
-                addSpecializationInternal(normalizedClient.specialization, cardColor)
+                catalogDao.insertSpecialization(SpecializationEntity(name = normalizedClient.specialization, color = cardColor))
             }
         }
         if (normalizedClient.location.isNotBlank()) {
-            addLocationInternal(normalizedClient.location)
+            catalogDao.insertLocation(LocationEntity(name = normalizedClient.location))
         }
-
-        val cv = ContentValues().apply {
-            put("name", normalizedClient.name)
-            put("phone", normalizedClient.phone)
-            put("second_phone", normalizedClient.secondPhone)
-            put("client_type", normalizedClient.clientType)
-            put("specialization", normalizedClient.specialization)
-            put("client_class", normalizedClient.clientClass)
-            put("location", normalizedClient.location)
-            put("is_classified", if (normalizedClient.isClassified) 1 else 0)
-            put("card_color", cardColor)
-            put("date_added", normalizedClient.dateAdded)
-            put("updated_at", normalizedClient.updatedAt)
-            put("notes", normalizedClient.notes)
-        }
-        db.update(DatabaseHelper.TABLE_CLIENTS, cv, "id = ?", arrayOf(client.id.toString()))
+        normalizedClient = normalizedClient.copy(cardColor = cardColor)
+        return normalizedClient
     }
 
     suspend fun deleteClient(id: Long): Int = withContext(Dispatchers.IO) {
-        val db = dbHelper.writableDatabase
-        db.delete(DatabaseHelper.TABLE_CLIENTS, "id = ?", arrayOf(id.toString()))
+        ensureMigrated()
+        clientDao.deleteById(id)
     }
 
     suspend fun getSpecializations(): List<Specialization> = withContext(Dispatchers.IO) {
-        val list = mutableListOf<Specialization>()
-        val db = dbHelper.readableDatabase
-        val cursor = db.query(DatabaseHelper.TABLE_SPECIALIZATIONS, null, null, null, null, null, "name ASC")
-        cursor.use {
-            while (it.moveToNext()) {
-                list.add(
-                    Specialization(
-                        id = it.getLong(it.getColumnIndexOrThrow("id")),
-                        name = it.getString(it.getColumnIndexOrThrow("name")),
-                        color = it.getString(it.getColumnIndexOrThrow("color"))
-                    )
-                )
-            }
-        }
-        list
-    }
-
-    private fun getSpecializationByName(name: String): Specialization? {
-        val db = dbHelper.readableDatabase
-        val cursor = db.query(DatabaseHelper.TABLE_SPECIALIZATIONS, null, "name = ?", arrayOf(name), null, null, null)
-        return cursor.use {
-            if (it.moveToFirst()) {
-                Specialization(
-                    id = it.getLong(it.getColumnIndexOrThrow("id")),
-                    name = it.getString(it.getColumnIndexOrThrow("name")),
-                    color = it.getString(it.getColumnIndexOrThrow("color"))
-                )
-            } else null
-        }
-    }
-
-    private fun addSpecializationInternal(name: String, color: String): Long {
-        val db = dbHelper.writableDatabase
-        val cv = ContentValues().apply {
-            put("name", name)
-            put("color", color)
-        }
-        return db.insertWithOnConflict(DatabaseHelper.TABLE_SPECIALIZATIONS, null, cv, SQLiteDatabase.CONFLICT_IGNORE)
+        ensureMigrated()
+        catalogDao.getSpecializations().map { it.toModel() }
     }
 
     suspend fun getLocations(): List<Location> = withContext(Dispatchers.IO) {
-        val list = mutableListOf<Location>()
-        val db = dbHelper.readableDatabase
-        val cursor = db.query(DatabaseHelper.TABLE_LOCATIONS, null, null, null, null, null, "name ASC")
-        cursor.use {
-            while (it.moveToNext()) {
-                list.add(
-                    Location(
-                        id = it.getLong(it.getColumnIndexOrThrow("id")),
-                        name = it.getString(it.getColumnIndexOrThrow("name"))
-                    )
-                )
-            }
-        }
-        list
-    }
-
-    private fun addLocationInternal(name: String): Long {
-        val db = dbHelper.writableDatabase
-        val cv = ContentValues().apply { put("name", name) }
-        return db.insertWithOnConflict(DatabaseHelper.TABLE_LOCATIONS, null, cv, SQLiteDatabase.CONFLICT_IGNORE)
+        ensureMigrated()
+        catalogDao.getLocations().map { it.toModel() }
     }
 
     suspend fun getPharmaciesByClientId(clientId: Long): List<Pharmacy> = withContext(Dispatchers.IO) {
-        val list = mutableListOf<Pharmacy>()
-        val db = dbHelper.readableDatabase
-        val cursor = db.query(DatabaseHelper.TABLE_PHARMACIES, null, "client_id = ?", arrayOf(clientId.toString()), null, null, "name ASC")
-        cursor.use {
-            while (it.moveToNext()) {
-                list.add(
-                    Pharmacy(
-                        id = it.getLong(it.getColumnIndexOrThrow("id")),
-                        name = it.getString(it.getColumnIndexOrThrow("name")),
-                        clientId = it.getLong(it.getColumnIndexOrThrow("client_id"))
-                    )
-                )
-            }
-        }
-        list
+        ensureMigrated()
+        catalogDao.getPharmaciesByClientId(clientId).map { it.toModel() }
     }
 
     suspend fun addPharmacy(pharmacy: Pharmacy): Long = withContext(Dispatchers.IO) {
-        val db = dbHelper.writableDatabase
-        val cv = ContentValues().apply {
-            put("name", pharmacy.name)
-            put("client_id", pharmacy.clientId)
-        }
-        db.insert(DatabaseHelper.TABLE_PHARMACIES, null, cv)
+        ensureMigrated()
+        catalogDao.upsertPharmacy(pharmacy.toEntity())
     }
 
     suspend fun getAllGalleryFiles(): List<GalleryFile> = withContext(Dispatchers.IO) {
-        val list = mutableListOf<GalleryFile>()
-        val db = dbHelper.readableDatabase
-        val cursor = db.query(DatabaseHelper.TABLE_GALLERY_FILES, null, null, null, null, null, "date_added DESC")
-        cursor.use {
-            while (it.moveToNext()) {
-                list.add(
-                    GalleryFile(
-                        id = it.getLong(it.getColumnIndexOrThrow("id")),
-                        name = it.getString(it.getColumnIndexOrThrow("name")),
-                        filePath = it.getString(it.getColumnIndexOrThrow("file_path")),
-                        type = it.getString(it.getColumnIndexOrThrow("type")),
-                        dateAdded = it.getLong(it.getColumnIndexOrThrow("date_added"))
-                    )
-                )
-            }
-        }
-        list
+        ensureMigrated()
+        galleryDao.getAll().map { it.toModel() }
     }
 
     suspend fun insertGalleryFile(file: GalleryFile): Long = withContext(Dispatchers.IO) {
-        val db = dbHelper.writableDatabase
-        val cv = ContentValues().apply {
-            put("name", file.name)
-            put("file_path", file.filePath)
-            put("type", file.type)
-            put("date_added", file.dateAdded)
-        }
-        db.insert(DatabaseHelper.TABLE_GALLERY_FILES, null, cv)
+        ensureMigrated()
+        galleryDao.upsert(file.toEntity())
     }
 
     suspend fun deleteGalleryFile(id: Long): Int = withContext(Dispatchers.IO) {
-        val db = dbHelper.writableDatabase
-        db.delete(DatabaseHelper.TABLE_GALLERY_FILES, "id = ?", arrayOf(id.toString()))
+        ensureMigrated()
+        galleryDao.deleteById(id)
     }
 
     suspend fun findDuplicateClient(client: Client): Client? = withContext(Dispatchers.IO) {
+        ensureMigrated()
         val n = client.normalizedForSaving()
-        val args = mutableListOf<String>()
-        val conditions = mutableListOf<String>()
-        if (n.phone.isNotBlank() && n.phone != "+967") { conditions.add("phone = ? OR second_phone = ?"); args.add(n.phone); args.add(n.phone) }
-        if (n.secondPhone.isNotBlank()) { conditions.add("phone = ? OR second_phone = ?"); args.add(n.secondPhone); args.add(n.secondPhone) }
-        if (n.name.isNotBlank()) { conditions.add("client_type = ? AND name = ?"); args.add(n.clientType); args.add(n.name) }
-        if (conditions.isEmpty()) return@withContext null
-        val where = "(${conditions.joinToString(") OR (")}) AND id != ?"
-        args.add(n.id.toString())
-        dbHelper.readableDatabase.query(DatabaseHelper.TABLE_CLIENTS, null, where, args.toTypedArray(), null, null, "id DESC", "1").use { if (it.moveToFirst()) cursorToClient(it) else null }
+        clientDao.getAll().map { it.toModel() }.firstOrNull { existing ->
+            existing.id != n.id && (
+                (n.phone.isNotBlank() && n.phone != "+967" && (existing.phone == n.phone || existing.secondPhone == n.phone)) ||
+                    (n.secondPhone.isNotBlank() && (existing.phone == n.secondPhone || existing.secondPhone == n.secondPhone)) ||
+                    (n.name.isNotBlank() && existing.clientType == n.clientType && existing.name.stripDoctorPrefix() == n.name.stripDoctorPrefix())
+                )
+        }
     }
 
     suspend fun insertMessageTemplate(template: MessageTemplate): Long = withContext(Dispatchers.IO) {
-        val cv = ContentValues().apply { put("title", template.title.trim()); put("body", template.body.trim()); put("date_added", template.dateAdded) }
-        dbHelper.writableDatabase.insert(DatabaseHelper.TABLE_MESSAGE_TEMPLATES, null, cv)
+        ensureMigrated()
+        messageDao.upsertTemplate(template.copy(title = template.title.trim(), body = template.body.trim()).toEntity())
     }
 
     suspend fun deleteMessageTemplate(id: Long): Int = withContext(Dispatchers.IO) {
-        dbHelper.writableDatabase.delete(DatabaseHelper.TABLE_MESSAGE_TEMPLATES, "id = ?", arrayOf(id.toString()))
+        ensureMigrated()
+        messageDao.deleteTemplate(id)
     }
 
     suspend fun getMessageTemplates(): List<MessageTemplate> = withContext(Dispatchers.IO) {
-        val list = mutableListOf<MessageTemplate>()
-        dbHelper.readableDatabase.query(DatabaseHelper.TABLE_MESSAGE_TEMPLATES, null, null, null, null, null, "date_added DESC").use {
-            while (it.moveToNext()) list.add(MessageTemplate(it.getLong(it.getColumnIndexOrThrow("id")), it.getString(it.getColumnIndexOrThrow("title")) ?: "", it.getString(it.getColumnIndexOrThrow("body")) ?: "", it.getLong(it.getColumnIndexOrThrow("date_added"))))
-        }
-        list
+        ensureMigrated()
+        messageDao.getTemplates().map { it.toModel() }
     }
 
     suspend fun createMessageCampaign(c: MessageCampaign): Long = withContext(Dispatchers.IO) {
-        val cv = ContentValues().apply { put("title", c.title); put("target_count", c.targetCount); put("sent_count", c.sentCount); put("message_mode", c.messageMode); put("attachment_name", c.attachmentName); put("date_created", c.dateCreated) }
-        dbHelper.writableDatabase.insert(DatabaseHelper.TABLE_MESSAGE_CAMPAIGNS, null, cv)
+        ensureMigrated()
+        messageDao.upsertCampaign(c.toEntity())
     }
 
     suspend fun updateCampaignSentCount(campaignId: Long, sentCount: Int): Int = withContext(Dispatchers.IO) {
-        val cv = ContentValues().apply { put("sent_count", sentCount) }
-        dbHelper.writableDatabase.update(DatabaseHelper.TABLE_MESSAGE_CAMPAIGNS, cv, "id = ?", arrayOf(campaignId.toString()))
+        ensureMigrated()
+        messageDao.updateCampaignSentCount(campaignId, sentCount)
     }
 
     suspend fun getMessageCampaigns(): List<MessageCampaign> = withContext(Dispatchers.IO) {
-        val list = mutableListOf<MessageCampaign>()
-        dbHelper.readableDatabase.query(DatabaseHelper.TABLE_MESSAGE_CAMPAIGNS, null, null, null, null, null, "date_created DESC").use {
-            while (it.moveToNext()) list.add(MessageCampaign(
-                id = it.getLong(it.getColumnIndexOrThrow("id")), title = it.getString(it.getColumnIndexOrThrow("title")) ?: "", targetCount = it.getInt(it.getColumnIndexOrThrow("target_count")), sentCount = it.getInt(it.getColumnIndexOrThrow("sent_count")), messageMode = it.getString(it.getColumnIndexOrThrow("message_mode")) ?: "TEXT_ONLY", attachmentName = it.getString(it.getColumnIndexOrThrow("attachment_name")) ?: "", dateCreated = it.getLong(it.getColumnIndexOrThrow("date_created"))))
-        }
-        list
+        ensureMigrated()
+        messageDao.getCampaigns().map { it.toModel() }
     }
 
-    suspend fun logMessage(log: MessageLog) = withContext(Dispatchers.IO) {
-        val cv = ContentValues().apply { put("client_id", log.clientId); put("timestamp", log.timestamp); put("message_text", log.messageText); put("attachment_name", log.attachmentName); put("attachment_type", log.attachmentType); put("send_mode", log.sendMode); put("campaign_id", log.campaignId); put("status", log.status) }
-        dbHelper.writableDatabase.insert(DatabaseHelper.TABLE_MESSAGE_LOGS, null, cv)
+    suspend fun logMessage(log: MessageLog): Long = withContext(Dispatchers.IO) {
+        ensureMigrated()
+        messageDao.insertLog(log.toEntity())
     }
 
     suspend fun logMessage(clientId: Long) = logMessage(MessageLog(clientId = clientId))
 
     suspend fun getMessageLogsByClientId(clientId: Long): List<MessageLog> = withContext(Dispatchers.IO) {
-        val list = mutableListOf<MessageLog>()
-        dbHelper.readableDatabase.query(DatabaseHelper.TABLE_MESSAGE_LOGS, null, "client_id = ?", arrayOf(clientId.toString()), null, null, "timestamp DESC").use { while (it.moveToNext()) list.add(cursorToMessageLog(it)) }
-        list
+        ensureMigrated()
+        messageDao.getLogsForClient(clientId).map { it.toModel() }
     }
-
 
     suspend fun getAllMessageLogs(): List<MessageLog> = withContext(Dispatchers.IO) {
-        val list = mutableListOf<MessageLog>()
-        dbHelper.readableDatabase.query(DatabaseHelper.TABLE_MESSAGE_LOGS, null, null, null, null, null, "timestamp DESC").use {
-            while (it.moveToNext()) list.add(cursorToMessageLog(it))
-        }
-        list
+        ensureMigrated()
+        messageDao.getAllLogs().map { it.toModel() }
     }
 
-
     suspend fun insertFollowUp(followUp: FollowUp): Long = withContext(Dispatchers.IO) {
-        val cv = ContentValues().apply {
-            put("client_id", followUp.clientId)
-            put("title", followUp.title.trim())
-            put("due_at", followUp.dueAt)
-            put("status", followUp.status)
-            put("notes", followUp.notes.trim())
-            put("created_at", followUp.createdAt)
-        }
-        dbHelper.writableDatabase.insert(DatabaseHelper.TABLE_FOLLOW_UPS, null, cv)
+        ensureMigrated()
+        val entity = followUp.copy(
+            title = followUp.title.trim(),
+            notes = followUp.notes.trim(),
+            status = if (followUp.status.isBlank()) "PENDING" else followUp.status
+        ).toEntity()
+        followUpDao.upsert(entity)
     }
 
     suspend fun updateFollowUpStatus(id: Long, status: String): Int = withContext(Dispatchers.IO) {
-        val cv = ContentValues().apply { put("status", status) }
-        dbHelper.writableDatabase.update(DatabaseHelper.TABLE_FOLLOW_UPS, cv, "id = ?", arrayOf(id.toString()))
+        ensureMigrated()
+        followUpDao.updateStatus(id, status)
     }
 
     suspend fun deleteFollowUp(id: Long): Int = withContext(Dispatchers.IO) {
-        dbHelper.writableDatabase.delete(DatabaseHelper.TABLE_FOLLOW_UPS, "id = ?", arrayOf(id.toString()))
+        ensureMigrated()
+        followUpDao.deleteById(id)
     }
 
     suspend fun getFollowUpsByClientId(clientId: Long): List<FollowUp> = withContext(Dispatchers.IO) {
-        val list = mutableListOf<FollowUp>()
-        dbHelper.readableDatabase.query(DatabaseHelper.TABLE_FOLLOW_UPS, null, "client_id = ?", arrayOf(clientId.toString()), null, null, "due_at ASC").use {
-            while (it.moveToNext()) list.add(cursorToFollowUp(it))
-        }
-        list
+        ensureMigrated()
+        followUpDao.getByClientId(clientId).map { it.toModel() }
     }
 
     suspend fun getPendingFollowUps(): List<FollowUpWithClient> = withContext(Dispatchers.IO) {
-        val list = mutableListOf<FollowUpWithClient>()
-        val sql = """
-            SELECT f.*, c.id AS c_id, c.name, c.phone, c.second_phone, c.client_type, c.specialization, c.client_class,
-                   c.location, c.is_classified, c.card_color, c.date_added, c.updated_at, c.notes AS client_notes
-            FROM ${DatabaseHelper.TABLE_FOLLOW_UPS} f
-            LEFT JOIN ${DatabaseHelper.TABLE_CLIENTS} c ON f.client_id = c.id
-            WHERE f.status = 'PENDING'
-            ORDER BY f.due_at ASC
-        """.trimIndent()
-        dbHelper.readableDatabase.rawQuery(sql, null).use { cursor ->
-            while (cursor.moveToNext()) {
-                val followUp = cursorToFollowUp(cursor)
-                val client = if (cursor.getColumnIndex("c_id") >= 0 && !cursor.isNull(cursor.getColumnIndexOrThrow("c_id"))) {
-                    Client(
-                        id = cursor.getLong(cursor.getColumnIndexOrThrow("c_id")),
-                        name = (cursor.getString(cursor.getColumnIndexOrThrow("name")) ?: "").doctorDisplayName(cursor.getString(cursor.getColumnIndexOrThrow("client_type")) ?: "طبيب"),
-                        phone = (cursor.getString(cursor.getColumnIndexOrThrow("phone")) ?: "").withYemenPhoneCode(),
-                        secondPhone = (cursor.getString(cursor.getColumnIndexOrThrow("second_phone")) ?: ""),
-                        clientType = cursor.getString(cursor.getColumnIndexOrThrow("client_type")) ?: "طبيب",
-                        specialization = cursor.getString(cursor.getColumnIndexOrThrow("specialization")) ?: "",
-                        clientClass = cursor.getString(cursor.getColumnIndexOrThrow("client_class")) ?: "B",
-                        location = cursor.getString(cursor.getColumnIndexOrThrow("location")) ?: "",
-                        isClassified = cursor.getInt(cursor.getColumnIndexOrThrow("is_classified")) == 1,
-                        cardColor = cursor.getString(cursor.getColumnIndexOrThrow("card_color")) ?: "#2196F3",
-                        dateAdded = cursor.getLong(cursor.getColumnIndexOrThrow("date_added")),
-                        updatedAt = getLongOrDefault(cursor, "updated_at", 0L),
-                        notes = getStringOrDefault(cursor, "client_notes", "")
-                    )
-                } else null
-                list.add(FollowUpWithClient(followUp, client))
-            }
+        ensureMigrated()
+        followUpDao.getPendingFollowUps().map { followUpEntity ->
+            val followUp = followUpEntity.toModel()
+            FollowUpWithClient(followUp, clientDao.getById(followUp.clientId)?.toModel())
         }
-        list
     }
 
     suspend fun restoreClients(clients: List<Client>, replaceExisting: Boolean): Pair<Int, Int> = withContext(Dispatchers.IO) {
-        val db = dbHelper.writableDatabase
-        if (replaceExisting) {
-            db.delete(DatabaseHelper.TABLE_CLIENTS, null, null)
-        }
+        ensureMigrated()
+        if (replaceExisting) clientDao.deleteAll()
         var inserted = 0
         var skipped = 0
         for (client in clients) {
             val normalized = client.normalizedForSaving().copy(id = 0, isClassified = true)
-            val duplicate = findDuplicateClient(normalized)
-            if (!replaceExisting && duplicate != null) {
-                skipped++
-            } else {
-                insertClient(normalized)
-                inserted++
-            }
+            val duplicate = if (replaceExisting) null else findDuplicateClient(normalized)
+            if (duplicate != null) skipped++ else { insertClient(normalized); inserted++ }
         }
         inserted to skipped
     }
@@ -465,86 +282,53 @@ class CrmRepository(context: Context) {
         appendLine("المتابعات المعلقة: ${followUps.size}")
     }
 
-
     suspend fun addAuditLog(log: AuditLog): Long = withContext(Dispatchers.IO) {
-        val cv = ContentValues().apply {
-            put("username", log.username)
-            put("action", log.action)
-            put("entity_type", log.entityType)
-            put("entity_id", log.entityId)
-            put("entity_name", log.entityName)
-            put("details", log.details)
-            put("created_at", log.createdAt)
-        }
-        dbHelper.writableDatabase.insert(DatabaseHelper.TABLE_AUDIT_LOGS, null, cv)
+        ensureMigrated()
+        auditDao.insert(log.toEntity())
     }
 
     suspend fun getAuditLogs(limit: Int = 250): List<AuditLog> = withContext(Dispatchers.IO) {
-        val list = mutableListOf<AuditLog>()
-        dbHelper.readableDatabase.query(DatabaseHelper.TABLE_AUDIT_LOGS, null, null, null, null, null, "created_at DESC", limit.toString()).use {
-            while (it.moveToNext()) list.add(cursorToAuditLog(it))
-        }
-        list
+        ensureMigrated()
+        auditDao.getAudit(limit).map { it.toModel() }
     }
 
     suspend fun getUsers(): List<UserAccount> = withContext(Dispatchers.IO) {
-        val list = mutableListOf<UserAccount>()
-        dbHelper.readableDatabase.query(DatabaseHelper.TABLE_USERS, null, null, null, null, null, "created_at ASC").use {
-            while (it.moveToNext()) list.add(cursorToUser(it))
-        }
-        list
+        ensureMigrated()
+        userDao.getUsers().map { it.toModel() }
     }
 
     suspend fun addUser(user: UserAccount): Long = withContext(Dispatchers.IO) {
-        val cv = ContentValues().apply {
-            put("name", user.name.trim())
-            put("username", user.username.trim())
-            put("password_hash", user.passwordHash)
-            put("role", user.role)
-            put("is_active", if (user.isActive) 1 else 0)
-            put("created_at", user.createdAt)
-            put("last_login", user.lastLogin)
-        }
-        dbHelper.writableDatabase.insertWithOnConflict(DatabaseHelper.TABLE_USERS, null, cv, SQLiteDatabase.CONFLICT_IGNORE)
+        ensureMigrated()
+        userDao.insert(user.copy(name = user.name.trim(), username = user.username.trim()).toEntity())
     }
 
     suspend fun updateUserRole(id: Long, role: String, active: Boolean): Int = withContext(Dispatchers.IO) {
-        val cv = ContentValues().apply { put("role", role); put("is_active", if (active) 1 else 0) }
-        dbHelper.writableDatabase.update(DatabaseHelper.TABLE_USERS, cv, "id = ?", arrayOf(id.toString()))
+        ensureMigrated()
+        userDao.updateRole(id, role, active)
     }
 
     suspend fun deleteUser(id: Long): Int = withContext(Dispatchers.IO) {
-        dbHelper.writableDatabase.delete(DatabaseHelper.TABLE_USERS, "id = ?", arrayOf(id.toString()))
+        ensureMigrated()
+        userDao.deleteById(id)
     }
 
     suspend fun saveSegment(segment: SavedSegment): Long = withContext(Dispatchers.IO) {
-        val cv = ContentValues().apply {
-            put("name", segment.name.trim())
-            put("query", segment.query.trim())
-            put("client_type", segment.clientType)
-            put("specialization", segment.specialization)
-            put("location", segment.location)
-            put("client_class", segment.clientClass)
-            put("only_pending_followup", if (segment.onlyPendingFollowUp) 1 else 0)
-            put("only_overdue_followup", if (segment.onlyOverdueFollowUp) 1 else 0)
-            put("created_at", segment.createdAt)
-        }
-        dbHelper.writableDatabase.insert(DatabaseHelper.TABLE_SAVED_SEGMENTS, null, cv)
+        ensureMigrated()
+        segmentDao.upsert(segment.copy(name = segment.name.trim(), query = segment.query.trim()).toEntity())
     }
 
     suspend fun getSavedSegments(): List<SavedSegment> = withContext(Dispatchers.IO) {
-        val list = mutableListOf<SavedSegment>()
-        dbHelper.readableDatabase.query(DatabaseHelper.TABLE_SAVED_SEGMENTS, null, null, null, null, null, "created_at DESC").use {
-            while (it.moveToNext()) list.add(cursorToSegment(it))
-        }
-        list
+        ensureMigrated()
+        segmentDao.getSegments().map { it.toModel() }
     }
 
     suspend fun deleteSegment(id: Long): Int = withContext(Dispatchers.IO) {
-        dbHelper.writableDatabase.delete(DatabaseHelper.TABLE_SAVED_SEGMENTS, "id = ?", arrayOf(id.toString()))
+        ensureMigrated()
+        segmentDao.deleteById(id)
     }
 
     suspend fun smartSearch(segment: SavedSegment): List<Client> = withContext(Dispatchers.IO) {
+        ensureMigrated()
         val clients = getAllClients()
         val pending = getPendingFollowUps()
         val pendingIds = pending.map { it.followUp.clientId }.toSet()
@@ -563,162 +347,82 @@ class CrmRepository(context: Context) {
     }
 
     fun performanceArchitectureSummary(): List<String> = listOf(
-        "تم تثبيت فهارس بحث إضافية على النوع/التخصص/المنطقة/التصنيف.",
-        "تم إنشاء طبقة Entities وDAO وRoom Database وتقسيم Repository إلى وحدات Client/Messaging/FollowUp/User/Audit/Segment.",
-        "تم اعتماد تحميل محدود لسجل النشاط والبحث الذكي لتفادي الضغط على الذاكرة.",
-        "تم الانتقال التدريجي إلى Room/DAO مع إبقاء واجهة CrmRepository كـ Facade توافقية لحماية بيانات المستخدم الحالية."
+        "تم نقل واجهة CrmRepository لتقرأ وتكتب من Room/DAO فعلياً بدلاً من SQLiteOpenHelper.",
+        "تمت إضافة مرحلة ترحيل كاملة تنسخ بيانات SQLite الحالية إلى قاعدة Room مرة واحدة دون فقدان البيانات.",
+        "تم إلغاء fallbackToDestructiveMigration واستبداله بـ Migration رسمية من Room v1 إلى v2.",
+        "تم توسيع Room ليغطي العملاء، التخصصات، المواقع، الصيدليات، المعرض، الرسائل، الحملات، المتابعات، المستخدمين، التدقيق والشرائح."
     )
 
     suspend fun getDashboardAnalytics(): DashboardAnalytics = withContext(Dispatchers.IO) {
-        val db = dbHelper.readableDatabase
+        ensureMigrated()
+        val clients = clientDao.getAll().map { it.toModel() }
+        val logs = messageDao.getAllLogs().map { it.toModel() }
+        val campaigns = messageDao.getCampaigns().map { it.toModel() }
+        val followUps = followUpDao.getPendingFollowUps().map { it.toModel() }
         val startOfWeek = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -7) }.timeInMillis
         val startOfMonth = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -30) }.timeInMillis
-        val totalClients = countQuery(db, "SELECT COUNT(*) FROM ${DatabaseHelper.TABLE_CLIENTS}")
-        val totalDoctors = countQuery(db, "SELECT COUNT(*) FROM ${DatabaseHelper.TABLE_CLIENTS} WHERE client_type = 'طبيب'")
-        val totalClassifiedDoctors = countQuery(db, "SELECT COUNT(*) FROM ${DatabaseHelper.TABLE_CLIENTS} WHERE client_type = 'طبيب' AND is_classified = 1 AND specialization != '' AND location != ''")
-        val weeklyMessages = countQuery(db, "SELECT COUNT(*) FROM ${DatabaseHelper.TABLE_MESSAGE_LOGS} WHERE timestamp >= ?", arrayOf(startOfWeek.toString()))
-        val monthlyMessages = countQuery(db, "SELECT COUNT(*) FROM ${DatabaseHelper.TABLE_MESSAGE_LOGS} WHERE timestamp >= ?", arrayOf(startOfMonth.toString()))
 
-        val unclassifiedDoctors = mutableListOf<Client>()
-        db.rawQuery("SELECT * FROM ${DatabaseHelper.TABLE_CLIENTS} WHERE client_type = 'طبيب' AND (is_classified = 0 OR specialization = '' OR location = '') LIMIT 20", null).use { while (it.moveToNext()) unclassifiedDoctors.add(cursorToClient(it)) }
+        val doctors = clients.filter { it.clientType == "طبيب" }
+        val weeklyLogs = logs.filter { it.timestamp >= startOfWeek }
+        val monthlyLogs = logs.filter { it.timestamp >= startOfMonth }
+        val weeklyLogClientIds = weeklyLogs.map { it.clientId }.toSet()
+        val monthlyLogClientIds = monthlyLogs.map { it.clientId }.toSet()
+        val logCountsByClient = logs.groupingBy { it.clientId }.eachCount()
+        val weeklyCountsByClient = weeklyLogs.groupingBy { it.clientId }.eachCount()
 
-        val contactedDoctorsThisWeek = mutableListOf<DoctorMessageCount>()
-        db.rawQuery("""
-            SELECT c.*, COUNT(m.id) as msg_count FROM ${DatabaseHelper.TABLE_CLIENTS} c
-            INNER JOIN ${DatabaseHelper.TABLE_MESSAGE_LOGS} m ON c.id = m.client_id
-            WHERE c.client_type = 'طبيب' AND m.timestamp >= ? GROUP BY c.id ORDER BY msg_count DESC
-        """.trimIndent(), arrayOf(startOfWeek.toString())).use { while (it.moveToNext()) contactedDoctorsThisWeek.add(DoctorMessageCount(cursorToClient(it), it.getInt(it.getColumnIndexOrThrow("msg_count")))) }
+        val totalClassifiedDoctors = doctors.count { it.isClassified && it.specialization.isNotBlank() && it.location.isNotBlank() }
+        val unclassifiedDoctors = doctors.filter { !it.isClassified || it.specialization.isBlank() || it.location.isBlank() }.take(20)
+        val contactedDoctorsThisWeek = doctors.filter { it.id in weeklyLogClientIds }
+            .map { DoctorMessageCount(it, weeklyCountsByClient[it.id] ?: 0) }
+            .sortedByDescending { it.messageCount }
+        val uncontactedDoctorsThisWeek = doctors.filter { it.id !in weeklyLogClientIds }.take(30)
+        val topContactedDoctors = doctors.map { DoctorMessageCount(it, logCountsByClient[it.id] ?: 0) }
+            .filter { it.messageCount > 0 }
+            .sortedByDescending { it.messageCount }
+            .take(5)
+        val overdueDoctors = doctors.filter { it.id !in monthlyLogClientIds }.take(10)
 
-        val uncontactedDoctorsThisWeek = mutableListOf<Client>()
-        db.rawQuery("""
-            SELECT * FROM ${DatabaseHelper.TABLE_CLIENTS} WHERE client_type = 'طبيب' AND id NOT IN
-            (SELECT DISTINCT client_id FROM ${DatabaseHelper.TABLE_MESSAGE_LOGS} WHERE timestamp >= ?) LIMIT 30
-        """.trimIndent(), arrayOf(startOfWeek.toString())).use { while (it.moveToNext()) uncontactedDoctorsThisWeek.add(cursorToClient(it)) }
-
-        val topContactedDoctors = mutableListOf<DoctorMessageCount>()
-        db.rawQuery("""
-            SELECT c.*, COUNT(m.id) as msg_count FROM ${DatabaseHelper.TABLE_CLIENTS} c
-            INNER JOIN ${DatabaseHelper.TABLE_MESSAGE_LOGS} m ON c.id = m.client_id
-            WHERE c.client_type = 'طبيب' GROUP BY c.id ORDER BY msg_count DESC LIMIT 5
-        """.trimIndent(), null).use { while (it.moveToNext()) topContactedDoctors.add(DoctorMessageCount(cursorToClient(it), it.getInt(it.getColumnIndexOrThrow("msg_count")))) }
-
-        val overdueDoctors = mutableListOf<Client>()
-        db.rawQuery("""
-            SELECT * FROM ${DatabaseHelper.TABLE_CLIENTS} WHERE client_type = 'طبيب' AND id NOT IN
-            (SELECT DISTINCT client_id FROM ${DatabaseHelper.TABLE_MESSAGE_LOGS} WHERE timestamp >= ?) LIMIT 10
-        """.trimIndent(), arrayOf(startOfMonth.toString())).use { while (it.moveToNext()) overdueDoctors.add(cursorToClient(it)) }
-
-        var totalCampaigns = 0; var totalCampaignTargets = 0; var totalCampaignOpened = 0
-        var textOnlyCampaigns = 0; var attachmentOnlyCampaigns = 0; var textAndAttachmentCampaigns = 0
-        db.rawQuery("SELECT COUNT(*), COALESCE(SUM(target_count),0), COALESCE(SUM(sent_count),0) FROM ${DatabaseHelper.TABLE_MESSAGE_CAMPAIGNS}", null).use { if (it.moveToFirst()) { totalCampaigns = it.getInt(0); totalCampaignTargets = it.getInt(1); totalCampaignOpened = it.getInt(2) } }
-        db.rawQuery("SELECT message_mode, COUNT(*) FROM ${DatabaseHelper.TABLE_MESSAGE_CAMPAIGNS} GROUP BY message_mode", null).use { while (it.moveToNext()) when (it.getString(0) ?: "") { "TEXT_ONLY" -> textOnlyCampaigns = it.getInt(1); "ATTACHMENT_ONLY" -> attachmentOnlyCampaigns = it.getInt(1); "TEXT_AND_ATTACHMENT" -> textAndAttachmentCampaigns = it.getInt(1) } }
+        var textOnlyCampaigns = 0
+        var attachmentOnlyCampaigns = 0
+        var textAndAttachmentCampaigns = 0
+        campaigns.groupingBy { it.messageMode }.eachCount().forEach { (mode, count) ->
+            when (mode) {
+                "TEXT_ONLY" -> textOnlyCampaigns = count
+                "ATTACHMENT_ONLY" -> attachmentOnlyCampaigns = count
+                "TEXT_AND_ATTACHMENT" -> textAndAttachmentCampaigns = count
+            }
+        }
 
         DashboardAnalytics(
-            totalClassifiedDoctors, unclassifiedDoctors, contactedDoctorsThisWeek, uncontactedDoctorsThisWeek,
-            totalDoctors, totalClients, totalCampaigns, totalCampaignTargets, totalCampaignOpened, weeklyMessages, monthlyMessages,
-            textOnlyCampaigns, attachmentOnlyCampaigns, textAndAttachmentCampaigns, topContactedDoctors, overdueDoctors,
-            groupedStats(db, "specialization", 6), groupedStats(db, "location", 6), getRecentCampaignsInternal(db, 5)
+            totalClassifiedDoctors = totalClassifiedDoctors,
+            unclassifiedDoctors = unclassifiedDoctors,
+            contactedDoctorsThisWeek = contactedDoctorsThisWeek,
+            uncontactedDoctorsThisWeek = uncontactedDoctorsThisWeek,
+            totalDoctors = doctors.size,
+            totalClients = clients.size,
+            totalCampaigns = campaigns.size,
+            totalCampaignTargets = campaigns.sumOf { it.targetCount },
+            totalCampaignOpened = campaigns.sumOf { it.sentCount },
+            weeklyMessages = weeklyLogs.size,
+            monthlyMessages = monthlyLogs.size,
+            textOnlyCampaigns = textOnlyCampaigns,
+            attachmentOnlyCampaigns = attachmentOnlyCampaigns,
+            textAndAttachmentCampaigns = textAndAttachmentCampaigns,
+            topContactedDoctors = topContactedDoctors,
+            overdueDoctors = overdueDoctors,
+            specializationStats = groupedStats(clients, { it.specialization }, 6),
+            locationStats = groupedStats(clients, { it.location }, 6),
+            recentCampaigns = campaigns.take(5)
         )
     }
 
-    private fun countQuery(db: SQLiteDatabase, sql: String, args: Array<String>? = null): Int { db.rawQuery(sql, args).use { return if (it.moveToFirst()) it.getInt(0) else 0 } }
-    private fun groupedStats(db: SQLiteDatabase, column: String, limit: Int): List<StatItem> {
-        val list = mutableListOf<StatItem>()
-        db.rawQuery("SELECT $column, COUNT(*) FROM ${DatabaseHelper.TABLE_CLIENTS} WHERE client_type = 'طبيب' AND $column IS NOT NULL AND $column != '' GROUP BY $column ORDER BY COUNT(*) DESC LIMIT $limit", null).use { while (it.moveToNext()) list.add(StatItem(it.getString(0) ?: "غير محدد", it.getInt(1))) }
-        return list
-    }
-    private fun getRecentCampaignsInternal(db: SQLiteDatabase, limit: Int): List<MessageCampaign> {
-        val list = mutableListOf<MessageCampaign>()
-        db.query(DatabaseHelper.TABLE_MESSAGE_CAMPAIGNS, null, null, null, null, null, "date_created DESC", limit.toString()).use { while (it.moveToNext()) list.add(MessageCampaign(id = it.getLong(it.getColumnIndexOrThrow("id")), title = it.getString(it.getColumnIndexOrThrow("title")) ?: "", targetCount = it.getInt(it.getColumnIndexOrThrow("target_count")), sentCount = it.getInt(it.getColumnIndexOrThrow("sent_count")), messageMode = it.getString(it.getColumnIndexOrThrow("message_mode")) ?: "TEXT_ONLY", attachmentName = it.getString(it.getColumnIndexOrThrow("attachment_name")) ?: "", dateCreated = it.getLong(it.getColumnIndexOrThrow("date_created")))) }
-        return list
-    }
-
-    private fun cursorToClient(cursor: Cursor): Client {
-        val clientType = cursor.getString(cursor.getColumnIndexOrThrow("client_type")) ?: "طبيب"
-        val rawName = cursor.getString(cursor.getColumnIndexOrThrow("name")) ?: ""
-        val rawPhone = cursor.getString(cursor.getColumnIndexOrThrow("phone")) ?: ""
-        val rawSecondPhone = cursor.getString(cursor.getColumnIndexOrThrow("second_phone")) ?: ""
-        return Client(
-            id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
-            name = if (clientType == "طبيب") rawName.withDoctorPrefix() else rawName.trim(),
-            phone = rawPhone.withYemenPhoneCode(),
-            secondPhone = if (rawSecondPhone.isBlank()) "" else rawSecondPhone.withYemenPhoneCode(),
-            clientType = clientType,
-            specialization = cursor.getString(cursor.getColumnIndexOrThrow("specialization")) ?: "",
-            clientClass = cursor.getString(cursor.getColumnIndexOrThrow("client_class")) ?: "B",
-            location = cursor.getString(cursor.getColumnIndexOrThrow("location")) ?: "",
-            isClassified = cursor.getInt(cursor.getColumnIndexOrThrow("is_classified")) == 1,
-            cardColor = cursor.getString(cursor.getColumnIndexOrThrow("card_color")) ?: "#2196F3",
-            dateAdded = cursor.getLong(cursor.getColumnIndexOrThrow("date_added")),
-            updatedAt = getLongOrDefault(cursor, "updated_at", cursor.getLong(cursor.getColumnIndexOrThrow("date_added"))),
-            notes = getStringOrDefault(cursor, "notes", "")
-        )
-    }
-
-    private fun cursorToFollowUp(cursor: Cursor): FollowUp = FollowUp(
-        id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
-        clientId = cursor.getLong(cursor.getColumnIndexOrThrow("client_id")),
-        title = cursor.getString(cursor.getColumnIndexOrThrow("title")) ?: "",
-        dueAt = cursor.getLong(cursor.getColumnIndexOrThrow("due_at")),
-        status = getStringOrDefault(cursor, "status", "PENDING"),
-        notes = getStringOrDefault(cursor, "notes", ""),
-        createdAt = getLongOrDefault(cursor, "created_at", 0L)
-    )
-
-    private fun cursorToMessageLog(cursor: Cursor): MessageLog = MessageLog(
-        id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
-        clientId = cursor.getLong(cursor.getColumnIndexOrThrow("client_id")),
-        timestamp = cursor.getLong(cursor.getColumnIndexOrThrow("timestamp")),
-        messageText = getStringOrDefault(cursor, "message_text", ""),
-        attachmentName = getStringOrDefault(cursor, "attachment_name", ""),
-        attachmentType = getStringOrDefault(cursor, "attachment_type", ""),
-        sendMode = getStringOrDefault(cursor, "send_mode", "TEXT_ONLY"),
-        campaignId = getLongOrDefault(cursor, "campaign_id", 0L),
-        status = getStringOrDefault(cursor, "status", "OPENED")
-    )
-
-
-    private fun cursorToAuditLog(cursor: Cursor): AuditLog = AuditLog(
-        id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
-        username = getStringOrDefault(cursor, "username", "system"),
-        action = getStringOrDefault(cursor, "action", ""),
-        entityType = getStringOrDefault(cursor, "entity_type", "APP"),
-        entityId = getLongOrDefault(cursor, "entity_id", 0L),
-        entityName = getStringOrDefault(cursor, "entity_name", ""),
-        details = getStringOrDefault(cursor, "details", ""),
-        createdAt = getLongOrDefault(cursor, "created_at", 0L)
-    )
-
-    private fun cursorToUser(cursor: Cursor): UserAccount = UserAccount(
-        id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
-        name = getStringOrDefault(cursor, "name", ""),
-        username = getStringOrDefault(cursor, "username", ""),
-        passwordHash = getStringOrDefault(cursor, "password_hash", ""),
-        role = getStringOrDefault(cursor, "role", "USER"),
-        isActive = cursor.getInt(cursor.getColumnIndexOrThrow("is_active")) == 1,
-        createdAt = getLongOrDefault(cursor, "created_at", 0L),
-        lastLogin = getLongOrDefault(cursor, "last_login", 0L)
-    )
-
-    private fun cursorToSegment(cursor: Cursor): SavedSegment = SavedSegment(
-        id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
-        name = getStringOrDefault(cursor, "name", ""),
-        query = getStringOrDefault(cursor, "query", ""),
-        clientType = getStringOrDefault(cursor, "client_type", "الكل"),
-        specialization = getStringOrDefault(cursor, "specialization", "الكل"),
-        location = getStringOrDefault(cursor, "location", "الكل"),
-        clientClass = getStringOrDefault(cursor, "client_class", "الكل"),
-        onlyPendingFollowUp = cursor.getInt(cursor.getColumnIndexOrThrow("only_pending_followup")) == 1,
-        onlyOverdueFollowUp = cursor.getInt(cursor.getColumnIndexOrThrow("only_overdue_followup")) == 1,
-        createdAt = getLongOrDefault(cursor, "created_at", 0L)
-    )
-
-    private fun getStringOrDefault(cursor: Cursor, column: String, default: String): String {
-        val index = cursor.getColumnIndex(column)
-        return if (index >= 0 && !cursor.isNull(index)) cursor.getString(index) else default
-    }
-    private fun getLongOrDefault(cursor: Cursor, column: String, default: Long): Long {
-        val index = cursor.getColumnIndex(column)
-        return if (index >= 0 && !cursor.isNull(index)) cursor.getLong(index) else default
-    }
+    private fun groupedStats(clients: List<Client>, selector: (Client) -> String, limit: Int): List<StatItem> =
+        clients.map(selector)
+            .filter { it.isNotBlank() }
+            .groupingBy { it }
+            .eachCount()
+            .entries
+            .sortedByDescending { it.value }
+            .take(limit)
+            .map { StatItem(it.key, it.value) }
 }

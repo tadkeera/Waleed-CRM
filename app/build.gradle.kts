@@ -12,8 +12,8 @@ android {
         applicationId = "com.waleed.crm"
         minSdk = 26
         targetSdk = 34
-        versionCode = 11
-        versionName = "2.0"
+        versionCode = 12
+        versionName = "2.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -21,8 +21,21 @@ android {
         }
     }
 
+    signingConfigs {
+        create("waleedUpdate") {
+            storeFile = file("waleed-crm-update.keystore")
+            storePassword = "waleedcrm2026"
+            keyAlias = "waleedcrm"
+            keyPassword = "waleedcrm2026"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("waleedUpdate")
+        }
         release {
+            signingConfig = signingConfigs.getByName("waleedUpdate")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

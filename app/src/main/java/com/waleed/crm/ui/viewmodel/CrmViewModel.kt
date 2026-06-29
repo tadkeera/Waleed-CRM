@@ -6,6 +6,7 @@ import com.waleed.crm.data.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
 
 class CrmViewModel(private val repository: CrmRepository) : ViewModel() {
 
@@ -33,6 +34,11 @@ class CrmViewModel(private val repository: CrmRepository) : ViewModel() {
     private val _messageCampaigns = MutableStateFlow<List<MessageCampaign>>(emptyList())
     val messageCampaigns: StateFlow<List<MessageCampaign>> = _messageCampaigns
 
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading
+
+    private var hasLoadedInitialData = false
+
     // State for Bulk WhatsApp Messaging Selection
     var selectedDoctorIdsForBulk = mutableListOf<Long>()
 
@@ -40,14 +46,39 @@ class CrmViewModel(private val repository: CrmRepository) : ViewModel() {
         loadInitialData()
     }
 
-    fun loadInitialData() {
+    fun loadInitialData(force: Boolean = false) {
+        if (hasLoadedInitialData && !force) return
+        viewModelScope.launch {
+            _isLoading.value = true
+            val clientsDeferred = async { repository.getAllClients() }
+            val specsDeferred = async { repository.getSpecializations() }
+            val locationsDeferred = async { repository.getLocations() }
+            val galleryDeferred = async { repository.getAllGalleryFiles() }
+            val templatesDeferred = async { repository.getMessageTemplates() }
+            val campaignsDeferred = async { repository.getMessageCampaigns() }
+            val analyticsDeferred = async { repository.getDashboardAnalytics() }
+
+            _clients.value = clientsDeferred.await()
+            _specializations.value = specsDeferred.await()
+            _locations.value = locationsDeferred.await()
+            _galleryFiles.value = galleryDeferred.await()
+            _messageTemplates.value = templatesDeferred.await()
+            _messageCampaigns.value = campaignsDeferred.await()
+            _dashboardAnalytics.value = analyticsDeferred.await()
+            hasLoadedInitialData = true
+            _isLoading.value = false
+        }
+    }
+
+    fun refreshDashboardAnalytics() {
+        viewModelScope.launch { _dashboardAnalytics.value = repository.getDashboardAnalytics() }
+    }
+
+    private fun refreshClientsAndLookups() {
         viewModelScope.launch {
             _clients.value = repository.getAllClients()
             _specializations.value = repository.getSpecializations()
             _locations.value = repository.getLocations()
-            _galleryFiles.value = repository.getAllGalleryFiles()
-            _messageTemplates.value = repository.getMessageTemplates()
-            _messageCampaigns.value = repository.getMessageCampaigns()
             _dashboardAnalytics.value = repository.getDashboardAnalytics()
         }
     }
@@ -69,7 +100,7 @@ class CrmViewModel(private val repository: CrmRepository) : ViewModel() {
                 repository.updateClient(client)
                 client.id
             }
-            loadInitialData()
+            refreshClientsAndLookups()
             onComplete(newId)
         }
     }
@@ -77,7 +108,7 @@ class CrmViewModel(private val repository: CrmRepository) : ViewModel() {
     fun deleteClient(id: Long, onComplete: () -> Unit = {}) {
         viewModelScope.launch {
             repository.deleteClient(id)
-            loadInitialData()
+            refreshClientsAndLookups()
             onComplete()
         }
     }
@@ -128,7 +159,7 @@ class CrmViewModel(private val repository: CrmRepository) : ViewModel() {
                     repository.insertClient(client)
                 }
             }
-            loadInitialData()
+            refreshClientsAndLookups()
         }
     }
 

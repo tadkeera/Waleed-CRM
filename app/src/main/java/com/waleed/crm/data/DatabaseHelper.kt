@@ -9,7 +9,7 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME
 
     companion object {
         const val DATABASE_NAME = "waleed_crm.db"
-        const val DATABASE_VERSION = 6
+        const val DATABASE_VERSION = 7
 
         // Tables
         const val TABLE_CLIENTS = "clients"
@@ -224,5 +224,10 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_clients_phone ON $TABLE_CLIENTS(phone)")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_message_logs_client_time ON $TABLE_MESSAGE_LOGS(client_id, timestamp)")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_message_logs_campaign ON $TABLE_MESSAGE_LOGS(campaign_id)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_clients_specialization ON $TABLE_CLIENTS(specialization)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_clients_location ON $TABLE_CLIENTS(location)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_clients_classified ON $TABLE_CLIENTS(is_classified)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_campaigns_created ON $TABLE_MESSAGE_CAMPAIGNS(date_created)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_gallery_type_date ON $TABLE_GALLERY_FILES(type, date_added)")
     }
 }

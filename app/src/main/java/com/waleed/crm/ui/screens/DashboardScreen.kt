@@ -30,7 +30,7 @@ import java.util.Locale
 @Composable
 fun DashboardScreen(viewModel: CrmViewModel, navController: NavController) {
     val analytics by viewModel.dashboardAnalytics.collectAsState()
-    LaunchedEffect(Unit) { viewModel.loadInitialData() }
+    LaunchedEffect(Unit) { viewModel.refreshDashboardAnalytics() }
     Scaffold(topBar = { TopAppBar(title = { Text("داشبورد وتحليلات متقدمة", fontWeight = FontWeight.Bold) }) }) { padding ->
         LazyColumn(modifier = Modifier.padding(padding).fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item { ExecutiveSummary(analytics) }

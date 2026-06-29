@@ -435,6 +435,110 @@ class CrmRepository(context: Context) {
         appendLine("المتابعات المعلقة: ${followUps.size}")
     }
 
+
+    suspend fun addAuditLog(log: AuditLog): Long = withContext(Dispatchers.IO) {
+        val cv = ContentValues().apply {
+            put("username", log.username)
+            put("action", log.action)
+            put("entity_type", log.entityType)
+            put("entity_id", log.entityId)
+            put("entity_name", log.entityName)
+            put("details", log.details)
+            put("created_at", log.createdAt)
+        }
+        dbHelper.writableDatabase.insert(DatabaseHelper.TABLE_AUDIT_LOGS, null, cv)
+    }
+
+    suspend fun getAuditLogs(limit: Int = 250): List<AuditLog> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<AuditLog>()
+        dbHelper.readableDatabase.query(DatabaseHelper.TABLE_AUDIT_LOGS, null, null, null, null, null, "created_at DESC", limit.toString()).use {
+            while (it.moveToNext()) list.add(cursorToAuditLog(it))
+        }
+        list
+    }
+
+    suspend fun getUsers(): List<UserAccount> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<UserAccount>()
+        dbHelper.readableDatabase.query(DatabaseHelper.TABLE_USERS, null, null, null, null, null, "created_at ASC").use {
+            while (it.moveToNext()) list.add(cursorToUser(it))
+        }
+        list
+    }
+
+    suspend fun addUser(user: UserAccount): Long = withContext(Dispatchers.IO) {
+        val cv = ContentValues().apply {
+            put("name", user.name.trim())
+            put("username", user.username.trim())
+            put("password_hash", user.passwordHash)
+            put("role", user.role)
+            put("is_active", if (user.isActive) 1 else 0)
+            put("created_at", user.createdAt)
+            put("last_login", user.lastLogin)
+        }
+        dbHelper.writableDatabase.insertWithOnConflict(DatabaseHelper.TABLE_USERS, null, cv, SQLiteDatabase.CONFLICT_IGNORE)
+    }
+
+    suspend fun updateUserRole(id: Long, role: String, active: Boolean): Int = withContext(Dispatchers.IO) {
+        val cv = ContentValues().apply { put("role", role); put("is_active", if (active) 1 else 0) }
+        dbHelper.writableDatabase.update(DatabaseHelper.TABLE_USERS, cv, "id = ?", arrayOf(id.toString()))
+    }
+
+    suspend fun deleteUser(id: Long): Int = withContext(Dispatchers.IO) {
+        dbHelper.writableDatabase.delete(DatabaseHelper.TABLE_USERS, "id = ?", arrayOf(id.toString()))
+    }
+
+    suspend fun saveSegment(segment: SavedSegment): Long = withContext(Dispatchers.IO) {
+        val cv = ContentValues().apply {
+            put("name", segment.name.trim())
+            put("query", segment.query.trim())
+            put("client_type", segment.clientType)
+            put("specialization", segment.specialization)
+            put("location", segment.location)
+            put("client_class", segment.clientClass)
+            put("only_pending_followup", if (segment.onlyPendingFollowUp) 1 else 0)
+            put("only_overdue_followup", if (segment.onlyOverdueFollowUp) 1 else 0)
+            put("created_at", segment.createdAt)
+        }
+        dbHelper.writableDatabase.insert(DatabaseHelper.TABLE_SAVED_SEGMENTS, null, cv)
+    }
+
+    suspend fun getSavedSegments(): List<SavedSegment> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<SavedSegment>()
+        dbHelper.readableDatabase.query(DatabaseHelper.TABLE_SAVED_SEGMENTS, null, null, null, null, null, "created_at DESC").use {
+            while (it.moveToNext()) list.add(cursorToSegment(it))
+        }
+        list
+    }
+
+    suspend fun deleteSegment(id: Long): Int = withContext(Dispatchers.IO) {
+        dbHelper.writableDatabase.delete(DatabaseHelper.TABLE_SAVED_SEGMENTS, "id = ?", arrayOf(id.toString()))
+    }
+
+    suspend fun smartSearch(segment: SavedSegment): List<Client> = withContext(Dispatchers.IO) {
+        val clients = getAllClients()
+        val pending = getPendingFollowUps()
+        val pendingIds = pending.map { it.followUp.clientId }.toSet()
+        val overdueIds = pending.filter { it.followUp.dueAt < System.currentTimeMillis() }.map { it.followUp.clientId }.toSet()
+        val q = segment.query.normalizedArabicSearchKey()
+        clients.filter { c ->
+            val haystack = listOf(c.name, c.phone, c.secondPhone, c.specialization, c.location, c.notes).joinToString(" ").normalizedArabicSearchKey()
+            (q.isBlank() || haystack.contains(q)) &&
+                (segment.clientType == "الكل" || c.clientType == segment.clientType) &&
+                (segment.specialization == "الكل" || c.specialization == segment.specialization) &&
+                (segment.location == "الكل" || c.location == segment.location) &&
+                (segment.clientClass == "الكل" || c.clientClass == segment.clientClass) &&
+                (!segment.onlyPendingFollowUp || c.id in pendingIds) &&
+                (!segment.onlyOverdueFollowUp || c.id in overdueIds)
+        }.take(500)
+    }
+
+    fun performanceArchitectureSummary(): List<String> = listOf(
+        "تم تثبيت فهارس بحث إضافية على النوع/التخصص/المنطقة/التصنيف.",
+        "تم فصل وظائف جديدة منطقياً: users, audit, segments, sync ضمن Repository مع قابلية نقلها لاحقاً إلى Room DAO.",
+        "تم اعتماد تحميل محدود لسجل النشاط والبحث الذكي لتفادي الضغط على الذاكرة.",
+        "المرحلة القادمة التقنية يمكن أن تنقل هذه الجداول تدريجياً إلى Room بدون كسر قاعدة SQLite الحالية."
+    )
+
     suspend fun getDashboardAnalytics(): DashboardAnalytics = withContext(Dispatchers.IO) {
         val db = dbHelper.readableDatabase
         val startOfWeek = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -7) }.timeInMillis
@@ -541,6 +645,42 @@ class CrmRepository(context: Context) {
         sendMode = getStringOrDefault(cursor, "send_mode", "TEXT_ONLY"),
         campaignId = getLongOrDefault(cursor, "campaign_id", 0L),
         status = getStringOrDefault(cursor, "status", "OPENED")
+    )
+
+
+    private fun cursorToAuditLog(cursor: Cursor): AuditLog = AuditLog(
+        id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
+        username = getStringOrDefault(cursor, "username", "system"),
+        action = getStringOrDefault(cursor, "action", ""),
+        entityType = getStringOrDefault(cursor, "entity_type", "APP"),
+        entityId = getLongOrDefault(cursor, "entity_id", 0L),
+        entityName = getStringOrDefault(cursor, "entity_name", ""),
+        details = getStringOrDefault(cursor, "details", ""),
+        createdAt = getLongOrDefault(cursor, "created_at", 0L)
+    )
+
+    private fun cursorToUser(cursor: Cursor): UserAccount = UserAccount(
+        id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
+        name = getStringOrDefault(cursor, "name", ""),
+        username = getStringOrDefault(cursor, "username", ""),
+        passwordHash = getStringOrDefault(cursor, "password_hash", ""),
+        role = getStringOrDefault(cursor, "role", "USER"),
+        isActive = cursor.getInt(cursor.getColumnIndexOrThrow("is_active")) == 1,
+        createdAt = getLongOrDefault(cursor, "created_at", 0L),
+        lastLogin = getLongOrDefault(cursor, "last_login", 0L)
+    )
+
+    private fun cursorToSegment(cursor: Cursor): SavedSegment = SavedSegment(
+        id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
+        name = getStringOrDefault(cursor, "name", ""),
+        query = getStringOrDefault(cursor, "query", ""),
+        clientType = getStringOrDefault(cursor, "client_type", "الكل"),
+        specialization = getStringOrDefault(cursor, "specialization", "الكل"),
+        location = getStringOrDefault(cursor, "location", "الكل"),
+        clientClass = getStringOrDefault(cursor, "client_class", "الكل"),
+        onlyPendingFollowUp = cursor.getInt(cursor.getColumnIndexOrThrow("only_pending_followup")) == 1,
+        onlyOverdueFollowUp = cursor.getInt(cursor.getColumnIndexOrThrow("only_overdue_followup")) == 1,
+        createdAt = getLongOrDefault(cursor, "created_at", 0L)
     )
 
     private fun getStringOrDefault(cursor: Cursor, column: String, default: String): String {

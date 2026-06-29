@@ -41,6 +41,19 @@ class CrmViewModel(private val repository: CrmRepository, private val appContext
     private val _followUps = MutableStateFlow<List<FollowUpWithClient>>(emptyList())
     val followUps: StateFlow<List<FollowUpWithClient>> = _followUps
 
+
+    private val _auditLogs = MutableStateFlow<List<AuditLog>>(emptyList())
+    val auditLogs: StateFlow<List<AuditLog>> = _auditLogs
+
+    private val _users = MutableStateFlow<List<UserAccount>>(emptyList())
+    val users: StateFlow<List<UserAccount>> = _users
+
+    private val _savedSegments = MutableStateFlow<List<SavedSegment>>(emptyList())
+    val savedSegments: StateFlow<List<SavedSegment>> = _savedSegments
+
+    private val _smartSearchResults = MutableStateFlow<List<Client>>(emptyList())
+    val smartSearchResults: StateFlow<List<Client>> = _smartSearchResults
+
     private var hasLoadedInitialData = false
 
     // State for Bulk WhatsApp Messaging Selection
@@ -62,6 +75,9 @@ class CrmViewModel(private val repository: CrmRepository, private val appContext
             val campaignsDeferred = async { repository.getMessageCampaigns() }
             val analyticsDeferred = async { repository.getDashboardAnalytics() }
             val followUpsDeferred = async { repository.getPendingFollowUps() }
+            val auditDeferred = async { repository.getAuditLogs() }
+            val usersDeferred = async { repository.getUsers() }
+            val segmentsDeferred = async { repository.getSavedSegments() }
 
             _clients.value = clientsDeferred.await()
             _specializations.value = specsDeferred.await()
@@ -71,6 +87,9 @@ class CrmViewModel(private val repository: CrmRepository, private val appContext
             _messageCampaigns.value = campaignsDeferred.await()
             _dashboardAnalytics.value = analyticsDeferred.await()
             _followUps.value = followUpsDeferred.await()
+            _auditLogs.value = auditDeferred.await()
+            _users.value = usersDeferred.await()
+            _savedSegments.value = segmentsDeferred.await()
             reschedulePendingReminders(_followUps.value)
             hasLoadedInitialData = true
             _isLoading.value = false
@@ -114,6 +133,8 @@ class CrmViewModel(private val repository: CrmRepository, private val appContext
     fun completeFollowUp(id: Long) {
         viewModelScope.launch {
             repository.updateFollowUpStatus(id, "DONE")
+            repository.addAuditLog(AuditLog(action = "إكمال متابعة", entityType = "FOLLOW_UP", entityId = id))
+            _auditLogs.value = repository.getAuditLogs()
             appContext?.let { FollowUpReminderScheduler.cancel(it, id) }
             _followUps.value = repository.getPendingFollowUps()
         }
@@ -122,6 +143,8 @@ class CrmViewModel(private val repository: CrmRepository, private val appContext
     fun deleteFollowUp(id: Long) {
         viewModelScope.launch {
             repository.deleteFollowUp(id)
+            repository.addAuditLog(AuditLog(action = "حذف متابعة", entityType = "FOLLOW_UP", entityId = id))
+            _auditLogs.value = repository.getAuditLogs()
             appContext?.let { FollowUpReminderScheduler.cancel(it, id) }
             _followUps.value = repository.getPendingFollowUps()
         }
@@ -144,6 +167,8 @@ class CrmViewModel(private val repository: CrmRepository, private val appContext
                 repository.updateClient(client)
                 client.id
             }
+            repository.addAuditLog(AuditLog(action = if (client.id == 0L) "إضافة عميل/طبيب" else "تعديل عميل/طبيب", entityType = "CLIENT", entityId = newId, entityName = client.name))
+            _auditLogs.value = repository.getAuditLogs()
             refreshClientsAndLookups()
             onComplete(newId)
         }
@@ -152,6 +177,8 @@ class CrmViewModel(private val repository: CrmRepository, private val appContext
     fun deleteClient(id: Long, onComplete: () -> Unit = {}) {
         viewModelScope.launch {
             repository.deleteClient(id)
+            repository.addAuditLog(AuditLog(action = "حذف عميل/طبيب", entityType = "CLIENT", entityId = id))
+            _auditLogs.value = repository.getAuditLogs()
             refreshClientsAndLookups()
             onComplete()
         }
@@ -284,6 +311,69 @@ class CrmViewModel(private val repository: CrmRepository, private val appContext
         FollowUpReminderScheduler.ensureChannel(context)
         items.forEach { FollowUpReminderScheduler.schedule(context, it) }
     }
+
+
+    fun addAudit(action: String, entityType: String = "APP", entityName: String = "", details: String = "") {
+        viewModelScope.launch {
+            repository.addAuditLog(AuditLog(action = action, entityType = entityType, entityName = entityName, details = details))
+            _auditLogs.value = repository.getAuditLogs()
+        }
+    }
+
+    fun refreshAuditLogs() { viewModelScope.launch { _auditLogs.value = repository.getAuditLogs() } }
+
+    fun addUser(name: String, username: String, role: String, onComplete: () -> Unit = {}) {
+        if (name.isBlank() || username.isBlank()) return
+        viewModelScope.launch {
+            repository.addUser(UserAccount(name = name, username = username, passwordHash = "local-pin-managed", role = role))
+            repository.addAuditLog(AuditLog(action = "إضافة مستخدم", entityType = "USER", entityName = username, details = role))
+            _users.value = repository.getUsers()
+            _auditLogs.value = repository.getAuditLogs()
+            onComplete()
+        }
+    }
+
+    fun updateUserRole(id: Long, role: String, active: Boolean) {
+        viewModelScope.launch {
+            repository.updateUserRole(id, role, active)
+            repository.addAuditLog(AuditLog(action = "تحديث صلاحية مستخدم", entityType = "USER", entityId = id, details = "$role / $active"))
+            _users.value = repository.getUsers()
+            _auditLogs.value = repository.getAuditLogs()
+        }
+    }
+
+    fun deleteUser(id: Long) {
+        viewModelScope.launch {
+            repository.deleteUser(id)
+            repository.addAuditLog(AuditLog(action = "حذف مستخدم", entityType = "USER", entityId = id))
+            _users.value = repository.getUsers()
+            _auditLogs.value = repository.getAuditLogs()
+        }
+    }
+
+    fun runSmartSearch(segment: SavedSegment) {
+        viewModelScope.launch { _smartSearchResults.value = repository.smartSearch(segment) }
+    }
+
+    fun saveSegment(segment: SavedSegment, onComplete: () -> Unit = {}) {
+        if (segment.name.isBlank()) return
+        viewModelScope.launch {
+            repository.saveSegment(segment)
+            repository.addAuditLog(AuditLog(action = "حفظ قائمة بحث", entityType = "SEGMENT", entityName = segment.name))
+            _savedSegments.value = repository.getSavedSegments()
+            _auditLogs.value = repository.getAuditLogs()
+            onComplete()
+        }
+    }
+
+    fun deleteSegment(id: Long) {
+        viewModelScope.launch {
+            repository.deleteSegment(id)
+            _savedSegments.value = repository.getSavedSegments()
+        }
+    }
+
+    fun performanceSummary(onResult: (List<String>) -> Unit) { onResult(repository.performanceArchitectureSummary()) }
 
     fun logBulkMessages(clientIds: List<Long>) {
         viewModelScope.launch {

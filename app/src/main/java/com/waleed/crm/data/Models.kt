@@ -97,3 +97,46 @@ data class FollowUpWithClient(
     val followUp: FollowUp,
     val client: Client?
 )
+
+
+data class UserAccount(
+    val id: Long = 0,
+    val name: String,
+    val username: String,
+    val passwordHash: String = "",
+    val role: String = "USER",
+    val isActive: Boolean = true,
+    val createdAt: Long = System.currentTimeMillis(),
+    val lastLogin: Long = 0L
+)
+
+data class AuditLog(
+    val id: Long = 0,
+    val username: String = "system",
+    val action: String,
+    val entityType: String = "APP",
+    val entityId: Long = 0,
+    val entityName: String = "",
+    val details: String = "",
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+data class SavedSegment(
+    val id: Long = 0,
+    val name: String,
+    val query: String = "",
+    val clientType: String = "الكل",
+    val specialization: String = "الكل",
+    val location: String = "الكل",
+    val clientClass: String = "الكل",
+    val onlyPendingFollowUp: Boolean = false,
+    val onlyOverdueFollowUp: Boolean = false,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+data class SyncStatus(
+    val enabled: Boolean = false,
+    val lastSyncAt: Long = 0L,
+    val lastFileName: String = "",
+    val lastMessage: String = "لم يتم تنفيذ مزامنة بعد"
+)

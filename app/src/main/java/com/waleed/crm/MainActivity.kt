@@ -21,6 +21,7 @@ import com.waleed.crm.ui.viewmodel.CrmViewModelFactory
 import com.waleed.crm.reminders.FollowUpReminderScheduler
 import com.waleed.crm.security.AppLockScreen
 import com.waleed.crm.security.savedPin
+import com.waleed.crm.ui.screens.isOnboardingDone
 import androidx.compose.runtime.*
 
 class MainActivity : ComponentActivity() {
@@ -44,7 +45,7 @@ class MainActivity : ComponentActivity() {
             incomingPhone.isNotBlank() -> "add_edit_client/0?phone=$incomingPhone"
             openFollowUps && notificationClientId > 0L -> "client_details/$notificationClientId"
             openFollowUps -> BottomNavItem.FollowUps.route
-            else -> BottomNavItem.Contacts.route
+            else -> if (isOnboardingDone(this)) BottomNavItem.Contacts.route else BottomNavItem.Onboarding.route
         }
 
         setContent {

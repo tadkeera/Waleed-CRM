@@ -12,8 +12,8 @@ android {
         applicationId = "com.waleed.crm"
         minSdk = 26
         targetSdk = 34
-        versionCode = 20
-        versionName = "2.9"
+        versionCode = 26
+        versionName = "3.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

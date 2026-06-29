@@ -11,6 +11,12 @@ import androidx.compose.material.icons.filled.MedicalServices
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Start
+import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.ManageSearch
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -26,6 +32,7 @@ import com.waleed.crm.ui.screens.*
 import com.waleed.crm.ui.viewmodel.CrmViewModel
 import com.waleed.crm.security.PrivacyScreen
 import com.waleed.crm.security.SecuritySettingsScreen
+import com.waleed.crm.security.UserManagementScreen
 
 sealed class BottomNavItem(val route: String, val title: String, val icon: ImageVector) {
     object Contacts : BottomNavItem("contacts_list", "قائمة الأسماء", Icons.Default.Contacts)
@@ -36,6 +43,12 @@ sealed class BottomNavItem(val route: String, val title: String, val icon: Image
     object FollowUps : BottomNavItem("follow_ups", "المتابعات", Icons.Default.Notifications)
     object Reports : BottomNavItem("reports", "التقارير", Icons.Default.Assessment)
     object Security : BottomNavItem("security_settings", "الأمان", Icons.Default.Security)
+    object Onboarding : BottomNavItem("onboarding", "الإعداد", Icons.Default.Start)
+    object Sync : BottomNavItem("cloud_sync", "المزامنة", Icons.Default.CloudSync)
+    object Users : BottomNavItem("users", "المستخدمون", Icons.Default.Group)
+    object Audit : BottomNavItem("audit_logs", "السجل", Icons.Default.History)
+    object SmartSearch : BottomNavItem("smart_search", "بحث ذكي", Icons.Default.ManageSearch)
+    object Performance : BottomNavItem("performance", "الأداء", Icons.Default.Speed)
 }
 
 @Composable
@@ -48,7 +61,7 @@ fun AppNavigation(
         bottomBar = {
             val navBackStackEntry by navController.currentBackStackEntryAsState()
             val currentRoute = navBackStackEntry?.destination?.route
-            val items = listOf(BottomNavItem.Contacts, BottomNavItem.Doctors, BottomNavItem.Gallery, BottomNavItem.Dashboard, BottomNavItem.ImportExport, BottomNavItem.FollowUps, BottomNavItem.Reports, BottomNavItem.Security)
+            val items = listOf(BottomNavItem.Contacts, BottomNavItem.Doctors, BottomNavItem.Dashboard, BottomNavItem.FollowUps, BottomNavItem.SmartSearch, BottomNavItem.Reports, BottomNavItem.Sync, BottomNavItem.Users, BottomNavItem.Audit, BottomNavItem.Security, BottomNavItem.Onboarding, BottomNavItem.Performance, BottomNavItem.ImportExport, BottomNavItem.Gallery)
 
             if (currentRoute in items.map { it.route }) {
                 NavigationBar {
@@ -100,6 +113,24 @@ fun AppNavigation(
             }
             composable(BottomNavItem.Security.route) {
                 SecuritySettingsScreen(navController = navController)
+            }
+            composable(BottomNavItem.Onboarding.route) {
+                OnboardingPermissionsScreen(navController = navController)
+            }
+            composable(BottomNavItem.Sync.route) {
+                CloudSyncScreen(viewModel = viewModel, navController = navController)
+            }
+            composable(BottomNavItem.Users.route) {
+                UserManagementScreen(viewModel = viewModel, navController = navController)
+            }
+            composable(BottomNavItem.Audit.route) {
+                AuditLogScreen(viewModel = viewModel, navController = navController)
+            }
+            composable(BottomNavItem.SmartSearch.route) {
+                SmartSearchScreen(viewModel = viewModel, navController = navController)
+            }
+            composable(BottomNavItem.Performance.route) {
+                ArchitecturePerformanceScreen(viewModel = viewModel, navController = navController)
             }
             composable(
                 route = "add_edit_client/{clientId}?phone={phone}",

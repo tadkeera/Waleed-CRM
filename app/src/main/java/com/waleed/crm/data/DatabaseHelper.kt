@@ -9,7 +9,7 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME
 
     companion object {
         const val DATABASE_NAME = "waleed_crm.db"
-        const val DATABASE_VERSION = 9
+        const val DATABASE_VERSION = 10
 
         // Tables
         const val TABLE_CLIENTS = "clients"
@@ -21,6 +21,9 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME
         const val TABLE_MESSAGE_TEMPLATES = "message_templates"
         const val TABLE_MESSAGE_CAMPAIGNS = "message_campaigns"
         const val TABLE_FOLLOW_UPS = "follow_ups"
+        const val TABLE_USERS = "users"
+        const val TABLE_AUDIT_LOGS = "audit_logs"
+        const val TABLE_SAVED_SEGMENTS = "saved_segments"
     }
 
     private val colorsPool = listOf(
@@ -99,6 +102,7 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME
 
         createMessagingTables(db)
         createFollowUpsTable(db)
+        createPhase16To21Tables(db)
         createIndexes(db)
 
         // Insert default specializations
@@ -183,6 +187,7 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME
         addColumnIfMissing(db, TABLE_MESSAGE_LOGS, "status", "TEXT DEFAULT 'OPENED'")
         createMessagingTables(db)
         createFollowUpsTable(db)
+        createPhase16To21Tables(db)
         createIndexes(db)
     }
 
@@ -190,6 +195,7 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME
         super.onOpen(db)
         createMessagingTables(db)
         createFollowUpsTable(db)
+        createPhase16To21Tables(db)
         createIndexes(db)
     }
 
@@ -238,6 +244,48 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME
         """.trimIndent())
     }
 
+    private fun createPhase16To21Tables(db: SQLiteDatabase) {
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS $TABLE_USERS (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                role TEXT DEFAULT 'USER',
+                is_active INTEGER DEFAULT 1,
+                created_at INTEGER NOT NULL,
+                last_login INTEGER DEFAULT 0
+            )
+        """.trimIndent())
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS $TABLE_AUDIT_LOGS (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT DEFAULT 'system',
+                action TEXT NOT NULL,
+                entity_type TEXT DEFAULT 'APP',
+                entity_id INTEGER DEFAULT 0,
+                entity_name TEXT DEFAULT '',
+                details TEXT DEFAULT '',
+                created_at INTEGER NOT NULL
+            )
+        """.trimIndent())
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS $TABLE_SAVED_SEGMENTS (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                query TEXT DEFAULT '',
+                client_type TEXT DEFAULT 'الكل',
+                specialization TEXT DEFAULT 'الكل',
+                location TEXT DEFAULT 'الكل',
+                client_class TEXT DEFAULT 'الكل',
+                only_pending_followup INTEGER DEFAULT 0,
+                only_overdue_followup INTEGER DEFAULT 0,
+                created_at INTEGER NOT NULL
+            )
+        """.trimIndent())
+    }
+
+
     private fun createIndexes(db: SQLiteDatabase) {
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_clients_type_name ON $TABLE_CLIENTS(client_type, name)")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_clients_phone ON $TABLE_CLIENTS(phone)")
@@ -250,5 +298,9 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_gallery_type_date ON $TABLE_GALLERY_FILES(type, date_added)")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_followups_status_due ON $TABLE_FOLLOW_UPS(status, due_at)")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_followups_client ON $TABLE_FOLLOW_UPS(client_id)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_clients_search ON $TABLE_CLIENTS(client_type, specialization, location, client_class)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_audit_created ON $TABLE_AUDIT_LOGS(created_at)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_audit_action ON $TABLE_AUDIT_LOGS(action, entity_type)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_segments_created ON $TABLE_SAVED_SEGMENTS(created_at)")
     }
 }

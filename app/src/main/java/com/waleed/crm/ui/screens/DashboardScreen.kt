@@ -31,7 +31,7 @@ import java.util.Locale
 fun DashboardScreen(viewModel: CrmViewModel, navController: NavController) {
     val analytics by viewModel.dashboardAnalytics.collectAsState()
     LaunchedEffect(Unit) { viewModel.refreshDashboardAnalytics() }
-    Scaffold(topBar = { TopAppBar(title = { Text("داشبورد وتحليلات متقدمة", fontWeight = FontWeight.Bold) }) }) { padding ->
+    Scaffold(topBar = { TopAppBar(title = { Text("داشبورد وتحليلات متقدمة", fontWeight = FontWeight.Bold) }, actions = { IconButton(onClick = { navController.navigate("privacy_security") }) { Icon(Icons.Default.Security, contentDescription = "الأمان والخصوصية") } }) }) { padding ->
         LazyColumn(modifier = Modifier.padding(padding).fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item { ExecutiveSummary(analytics) }
             item { CampaignPerformanceCard(analytics) }

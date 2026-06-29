@@ -51,9 +51,7 @@ class MainActivity : ComponentActivity() {
 
     private fun requestPermissionsIfNeeded() {
         val permissions = mutableListOf(
-            Manifest.permission.READ_PHONE_STATE,
-            Manifest.permission.READ_CALL_LOG,
-            Manifest.permission.READ_CONTACTS
+            Manifest.permission.READ_PHONE_STATE
         )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
@@ -65,7 +63,7 @@ class MainActivity : ComponentActivity() {
 
         if (neededPermissions.isNotEmpty()) {
             val launcher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ ->
-                // Permissions handled
+                // الصلاحيات اختيارية ويتم التعامل مع الرفض بدون إيقاف التطبيق.
             }
             launcher.launch(neededPermissions.toTypedArray())
         }

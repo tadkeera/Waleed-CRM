@@ -20,6 +20,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.waleed.crm.ui.screens.*
 import com.waleed.crm.ui.viewmodel.CrmViewModel
+import com.waleed.crm.security.PrivacyScreen
 
 sealed class BottomNavItem(val route: String, val title: String, val icon: ImageVector) {
     object Contacts : BottomNavItem("contacts_list", "قائمة الأسماء", Icons.Default.Contacts)
@@ -94,6 +95,9 @@ fun AppNavigation(
                     clientId = clientId,
                     incomingPhone = phone
                 )
+            }
+            composable("privacy_security") {
+                PrivacyScreen(navController = navController)
             }
             composable(
                 route = "client_details/{clientId}",

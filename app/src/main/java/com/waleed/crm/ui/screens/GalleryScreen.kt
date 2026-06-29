@@ -3,6 +3,7 @@ package com.waleed.crm.ui.screens
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.webkit.MimeTypeMap
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -34,6 +35,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
+import java.security.MessageDigest
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -174,33 +177,47 @@ fun GalleryItemCard(file: GalleryFile, onDelete: () -> Unit) {
 
 private fun saveFileToGallery(context: Context, uri: Uri, viewModel: CrmViewModel) {
     val contentResolver = context.contentResolver
-    var fileName = "attachment_${System.currentTimeMillis()}"
-    val mimeType = contentResolver.getType(uri) ?: ""
-    val type = if (mimeType.startsWith("image")) "image" else "pdf"
+    val mimeType = contentResolver.getType(uri) ?: return
+    val allowedMimeTypes = setOf("image/jpeg", "image/png", "image/webp", "application/pdf")
+    if (mimeType !in allowedMimeTypes) return
 
-    contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-        if (cursor.moveToFirst()) {
-            val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            if (nameIndex != -1) {
-                fileName = cursor.getString(nameIndex) ?: fileName
-            }
-        }
-    }
+    val type = if (mimeType.startsWith("image")) "image" else "pdf"
+    val originalName = readDisplayName(context, uri) ?: "attachment_${System.currentTimeMillis()}"
+    val safeDisplayName = sanitizeFileName(originalName)
+    val extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType)
+        ?: safeDisplayName.substringAfterLast('.', if (type == "image") "jpg" else "pdf")
+    val storedName = "${System.currentTimeMillis()}_${sha256(safeDisplayName).take(10)}.$extension"
 
     val galleryDir = File(context.filesDir, "media_gallery")
-    if (!galleryDir.exists()) {
-        galleryDir.mkdirs()
-    }
+    if (!galleryDir.exists()) galleryDir.mkdirs()
 
-    val destinationFile = File(galleryDir, fileName)
+    val destinationFile = File(galleryDir, storedName)
     try {
         contentResolver.openInputStream(uri)?.use { input ->
-            FileOutputStream(destinationFile).use { output ->
-                input.copyTo(output)
-            }
+            FileOutputStream(destinationFile).use { output -> input.copyTo(output) }
         }
-        viewModel.addGalleryFile(fileName, destinationFile.absolutePath, type)
-    } catch (e: Exception) {
-        e.printStackTrace()
+        viewModel.addGalleryFile(safeDisplayName, destinationFile.absolutePath, type)
+    } catch (_: Exception) {
+        destinationFile.delete()
     }
+}
+
+private fun readDisplayName(context: Context, uri: Uri): String? {
+    context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+        if (cursor.moveToFirst()) {
+            val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (nameIndex != -1) return cursor.getString(nameIndex)
+        }
+    }
+    return null
+}
+
+private fun sanitizeFileName(input: String): String {
+    val cleaned = input.replace(Regex("""[\\/:*?"<>|]"""), "_").trim().take(80)
+    return cleaned.ifBlank { "attachment_${System.currentTimeMillis()}" }
+}
+
+private fun sha256(input: String): String {
+    val digest = MessageDigest.getInstance("SHA-256").digest(input.lowercase(Locale.ROOT).toByteArray())
+    return digest.joinToString("") { "%02x".format(it) }
 }

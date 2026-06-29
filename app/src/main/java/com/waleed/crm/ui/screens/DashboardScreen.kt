@@ -30,10 +30,12 @@ import java.util.Locale
 @Composable
 fun DashboardScreen(viewModel: CrmViewModel, navController: NavController) {
     val analytics by viewModel.dashboardAnalytics.collectAsState()
-    LaunchedEffect(Unit) { viewModel.refreshDashboardAnalytics() }
+    val followUps by viewModel.followUps.collectAsState()
+    LaunchedEffect(Unit) { viewModel.refreshDashboardAnalytics(); viewModel.refreshFollowUps() }
     Scaffold(topBar = { TopAppBar(title = { Text("داشبورد وتحليلات متقدمة", fontWeight = FontWeight.Bold) }, actions = { IconButton(onClick = { navController.navigate("privacy_security") }) { Icon(Icons.Default.Security, contentDescription = "الأمان والخصوصية") } }) }) { padding ->
         LazyColumn(modifier = Modifier.padding(padding).fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item { ExecutiveSummary(analytics) }
+            item { FollowUpSummaryCard(followUps.size, navController) }
             item { CampaignPerformanceCard(analytics) }
             item { SectionHeader("مؤشرات الأداء", Icons.Default.Analytics) }
             item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) { MetricCard("رسائل آخر 7 أيام", analytics.weeklyMessages.toString(), Icons.Default.Message, MaterialTheme.colorScheme.primaryContainer, Modifier.weight(1f)); MetricCard("رسائل آخر 30 يوم", analytics.monthlyMessages.toString(), Icons.Default.Schedule, MaterialTheme.colorScheme.secondaryContainer, Modifier.weight(1f)) } }
@@ -47,6 +49,8 @@ fun DashboardScreen(viewModel: CrmViewModel, navController: NavController) {
         }
     }
 }
+
+@Composable private fun FollowUpSummaryCard(count: Int, navController: NavController) { Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) { Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Notifications, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(10.dp)); Column(Modifier.weight(1f)) { Text("المتابعات المعلقة", fontWeight = FontWeight.Bold, fontSize = 17.sp); Text("لديك $count متابعة تحتاج مراجعة", fontSize = 13.sp) }; Button(onClick = { navController.navigate("follow_ups") }) { Text("عرض") } } } }
 
 @Composable private fun ExecutiveSummary(data: DashboardAnalytics) { Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) { Column(Modifier.padding(18.dp)) { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Groups, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(42.dp)); Spacer(Modifier.width(12.dp)); Column { Text("ملخص CRM التنفيذي", fontWeight = FontWeight.Bold, fontSize = 20.sp); Text("نظرة سريعة على العملاء والأطباء والحملات", fontSize = 13.sp) } }; Spacer(Modifier.height(16.dp)); Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) { MiniStat("العملاء", data.totalClients.toString(), Modifier.weight(1f)); MiniStat("الأطباء", data.totalDoctors.toString(), Modifier.weight(1f)); MiniStat("المكتمل", data.totalClassifiedDoctors.toString(), Modifier.weight(1f)) } } } }
 @Composable private fun MiniStat(label: String, value: String, modifier: Modifier = Modifier) { Surface(modifier = modifier, shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .72f)) { Column(Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) { Text(value, fontWeight = FontWeight.Bold, fontSize = 22.sp); Text(label, fontSize = 12.sp, color = MaterialTheme.colorScheme.outline) } } }

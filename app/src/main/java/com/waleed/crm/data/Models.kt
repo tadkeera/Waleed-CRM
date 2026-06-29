@@ -81,3 +81,19 @@ data class MessageLog(
     val status: String = "OPENED"
 )
 data class DoctorMessageCount(val client: Client, val messageCount: Int)
+
+
+data class FollowUp(
+    val id: Long = 0,
+    val clientId: Long,
+    val title: String,
+    val dueAt: Long,
+    val status: String = "PENDING",
+    val notes: String = "",
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+data class FollowUpWithClient(
+    val followUp: FollowUp,
+    val client: Client?
+)

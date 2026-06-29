@@ -37,6 +37,9 @@ class CrmViewModel(private val repository: CrmRepository) : ViewModel() {
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading
 
+    private val _followUps = MutableStateFlow<List<FollowUpWithClient>>(emptyList())
+    val followUps: StateFlow<List<FollowUpWithClient>> = _followUps
+
     private var hasLoadedInitialData = false
 
     // State for Bulk WhatsApp Messaging Selection
@@ -57,6 +60,7 @@ class CrmViewModel(private val repository: CrmRepository) : ViewModel() {
             val templatesDeferred = async { repository.getMessageTemplates() }
             val campaignsDeferred = async { repository.getMessageCampaigns() }
             val analyticsDeferred = async { repository.getDashboardAnalytics() }
+            val followUpsDeferred = async { repository.getPendingFollowUps() }
 
             _clients.value = clientsDeferred.await()
             _specializations.value = specsDeferred.await()
@@ -65,6 +69,7 @@ class CrmViewModel(private val repository: CrmRepository) : ViewModel() {
             _messageTemplates.value = templatesDeferred.await()
             _messageCampaigns.value = campaignsDeferred.await()
             _dashboardAnalytics.value = analyticsDeferred.await()
+            _followUps.value = followUpsDeferred.await()
             hasLoadedInitialData = true
             _isLoading.value = false
         }
@@ -80,6 +85,37 @@ class CrmViewModel(private val repository: CrmRepository) : ViewModel() {
             _specializations.value = repository.getSpecializations()
             _locations.value = repository.getLocations()
             _dashboardAnalytics.value = repository.getDashboardAnalytics()
+        }
+    }
+
+    fun refreshFollowUps() {
+        viewModelScope.launch { _followUps.value = repository.getPendingFollowUps() }
+    }
+
+    fun getFollowUpsByClientId(clientId: Long, onResult: (List<FollowUp>) -> Unit) {
+        viewModelScope.launch { onResult(repository.getFollowUpsByClientId(clientId)) }
+    }
+
+    fun addFollowUp(clientId: Long, title: String, dueAt: Long, notes: String = "", onComplete: () -> Unit = {}) {
+        if (clientId == 0L || title.isBlank()) return
+        viewModelScope.launch {
+            repository.insertFollowUp(FollowUp(clientId = clientId, title = title, dueAt = dueAt, notes = notes))
+            _followUps.value = repository.getPendingFollowUps()
+            onComplete()
+        }
+    }
+
+    fun completeFollowUp(id: Long) {
+        viewModelScope.launch {
+            repository.updateFollowUpStatus(id, "DONE")
+            _followUps.value = repository.getPendingFollowUps()
+        }
+    }
+
+    fun deleteFollowUp(id: Long) {
+        viewModelScope.launch {
+            repository.deleteFollowUp(id)
+            _followUps.value = repository.getPendingFollowUps()
         }
     }
 

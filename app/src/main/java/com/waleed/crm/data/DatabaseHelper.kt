@@ -9,7 +9,7 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME
 
     companion object {
         const val DATABASE_NAME = "waleed_crm.db"
-        const val DATABASE_VERSION = 7
+        const val DATABASE_VERSION = 8
 
         // Tables
         const val TABLE_CLIENTS = "clients"
@@ -20,6 +20,7 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME
         const val TABLE_MESSAGE_LOGS = "message_logs"
         const val TABLE_MESSAGE_TEMPLATES = "message_templates"
         const val TABLE_MESSAGE_CAMPAIGNS = "message_campaigns"
+        const val TABLE_FOLLOW_UPS = "follow_ups"
     }
 
     private val colorsPool = listOf(
@@ -97,6 +98,7 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME
         """.trimIndent())
 
         createMessagingTables(db)
+        createFollowUpsTable(db)
         createIndexes(db)
 
         // Insert default specializations
@@ -180,12 +182,14 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME
         addColumnIfMissing(db, TABLE_MESSAGE_LOGS, "campaign_id", "INTEGER DEFAULT 0")
         addColumnIfMissing(db, TABLE_MESSAGE_LOGS, "status", "TEXT DEFAULT 'OPENED'")
         createMessagingTables(db)
+        createFollowUpsTable(db)
         createIndexes(db)
     }
 
     override fun onOpen(db: SQLiteDatabase) {
         super.onOpen(db)
         createMessagingTables(db)
+        createFollowUpsTable(db)
         createIndexes(db)
     }
 
@@ -219,6 +223,21 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME
         """.trimIndent())
     }
 
+    private fun createFollowUpsTable(db: SQLiteDatabase) {
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS $TABLE_FOLLOW_UPS (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                due_at INTEGER NOT NULL,
+                status TEXT DEFAULT 'PENDING',
+                notes TEXT DEFAULT '',
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY(client_id) REFERENCES $TABLE_CLIENTS(id) ON DELETE CASCADE
+            )
+        """.trimIndent())
+    }
+
     private fun createIndexes(db: SQLiteDatabase) {
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_clients_type_name ON $TABLE_CLIENTS(client_type, name)")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_clients_phone ON $TABLE_CLIENTS(phone)")
@@ -229,5 +248,7 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_clients_classified ON $TABLE_CLIENTS(is_classified)")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_campaigns_created ON $TABLE_MESSAGE_CAMPAIGNS(date_created)")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_gallery_type_date ON $TABLE_GALLERY_FILES(type, date_added)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_followups_status_due ON $TABLE_FOLLOW_UPS(status, due_at)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_followups_client ON $TABLE_FOLLOW_UPS(client_id)")
     }
 }

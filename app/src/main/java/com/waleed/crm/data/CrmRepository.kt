@@ -340,6 +340,72 @@ class CrmRepository(context: Context) {
         list
     }
 
+
+    suspend fun insertFollowUp(followUp: FollowUp): Long = withContext(Dispatchers.IO) {
+        val cv = ContentValues().apply {
+            put("client_id", followUp.clientId)
+            put("title", followUp.title.trim())
+            put("due_at", followUp.dueAt)
+            put("status", followUp.status)
+            put("notes", followUp.notes.trim())
+            put("created_at", followUp.createdAt)
+        }
+        dbHelper.writableDatabase.insert(DatabaseHelper.TABLE_FOLLOW_UPS, null, cv)
+    }
+
+    suspend fun updateFollowUpStatus(id: Long, status: String): Int = withContext(Dispatchers.IO) {
+        val cv = ContentValues().apply { put("status", status) }
+        dbHelper.writableDatabase.update(DatabaseHelper.TABLE_FOLLOW_UPS, cv, "id = ?", arrayOf(id.toString()))
+    }
+
+    suspend fun deleteFollowUp(id: Long): Int = withContext(Dispatchers.IO) {
+        dbHelper.writableDatabase.delete(DatabaseHelper.TABLE_FOLLOW_UPS, "id = ?", arrayOf(id.toString()))
+    }
+
+    suspend fun getFollowUpsByClientId(clientId: Long): List<FollowUp> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<FollowUp>()
+        dbHelper.readableDatabase.query(DatabaseHelper.TABLE_FOLLOW_UPS, null, "client_id = ?", arrayOf(clientId.toString()), null, null, "due_at ASC").use {
+            while (it.moveToNext()) list.add(cursorToFollowUp(it))
+        }
+        list
+    }
+
+    suspend fun getPendingFollowUps(): List<FollowUpWithClient> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<FollowUpWithClient>()
+        val sql = """
+            SELECT f.*, c.id AS c_id, c.name, c.phone, c.second_phone, c.client_type, c.specialization, c.client_class,
+                   c.location, c.is_classified, c.card_color, c.date_added, c.updated_at, c.notes AS client_notes
+            FROM ${DatabaseHelper.TABLE_FOLLOW_UPS} f
+            LEFT JOIN ${DatabaseHelper.TABLE_CLIENTS} c ON f.client_id = c.id
+            WHERE f.status = 'PENDING'
+            ORDER BY f.due_at ASC
+        """.trimIndent()
+        dbHelper.readableDatabase.rawQuery(sql, null).use { cursor ->
+            while (cursor.moveToNext()) {
+                val followUp = cursorToFollowUp(cursor)
+                val client = if (cursor.getColumnIndex("c_id") >= 0 && !cursor.isNull(cursor.getColumnIndexOrThrow("c_id"))) {
+                    Client(
+                        id = cursor.getLong(cursor.getColumnIndexOrThrow("c_id")),
+                        name = (cursor.getString(cursor.getColumnIndexOrThrow("name")) ?: "").doctorDisplayName(cursor.getString(cursor.getColumnIndexOrThrow("client_type")) ?: "طبيب"),
+                        phone = (cursor.getString(cursor.getColumnIndexOrThrow("phone")) ?: "").withYemenPhoneCode(),
+                        secondPhone = (cursor.getString(cursor.getColumnIndexOrThrow("second_phone")) ?: ""),
+                        clientType = cursor.getString(cursor.getColumnIndexOrThrow("client_type")) ?: "طبيب",
+                        specialization = cursor.getString(cursor.getColumnIndexOrThrow("specialization")) ?: "",
+                        clientClass = cursor.getString(cursor.getColumnIndexOrThrow("client_class")) ?: "B",
+                        location = cursor.getString(cursor.getColumnIndexOrThrow("location")) ?: "",
+                        isClassified = cursor.getInt(cursor.getColumnIndexOrThrow("is_classified")) == 1,
+                        cardColor = cursor.getString(cursor.getColumnIndexOrThrow("card_color")) ?: "#2196F3",
+                        dateAdded = cursor.getLong(cursor.getColumnIndexOrThrow("date_added")),
+                        updatedAt = getLongOrDefault(cursor, "updated_at", 0L),
+                        notes = getStringOrDefault(cursor, "client_notes", "")
+                    )
+                } else null
+                list.add(FollowUpWithClient(followUp, client))
+            }
+        }
+        list
+    }
+
     suspend fun getDashboardAnalytics(): DashboardAnalytics = withContext(Dispatchers.IO) {
         val db = dbHelper.readableDatabase
         val startOfWeek = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -7) }.timeInMillis
@@ -425,6 +491,16 @@ class CrmRepository(context: Context) {
             notes = getStringOrDefault(cursor, "notes", "")
         )
     }
+
+    private fun cursorToFollowUp(cursor: Cursor): FollowUp = FollowUp(
+        id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
+        clientId = cursor.getLong(cursor.getColumnIndexOrThrow("client_id")),
+        title = cursor.getString(cursor.getColumnIndexOrThrow("title")) ?: "",
+        dueAt = cursor.getLong(cursor.getColumnIndexOrThrow("due_at")),
+        status = getStringOrDefault(cursor, "status", "PENDING"),
+        notes = getStringOrDefault(cursor, "notes", ""),
+        createdAt = getLongOrDefault(cursor, "created_at", 0L)
+    )
 
     private fun cursorToMessageLog(cursor: Cursor): MessageLog = MessageLog(
         id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),

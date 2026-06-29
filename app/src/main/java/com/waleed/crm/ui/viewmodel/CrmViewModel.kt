@@ -173,6 +173,60 @@ class CrmViewModel(private val repository: CrmRepository) : ViewModel() {
     fun updateCampaignSentCount(campaignId: Long, sentCount: Int) { if (campaignId <= 0L) return; viewModelScope.launch { repository.updateCampaignSentCount(campaignId, sentCount); _messageCampaigns.value = repository.getMessageCampaigns() } }
     fun logMessage(log: MessageLog) { viewModelScope.launch { repository.logMessage(log); _dashboardAnalytics.value = repository.getDashboardAnalytics() } }
     fun getMessageLogsByClientId(clientId: Long, onResult: (List<MessageLog>) -> Unit) { viewModelScope.launch { onResult(repository.getMessageLogsByClientId(clientId)) } }
+    fun getAllMessageLogs(onResult: (List<MessageLog>) -> Unit) {
+        viewModelScope.launch { onResult(repository.getAllMessageLogs()) }
+    }
+
+    fun importClientsFromCsv(csv: String, onComplete: (inserted: Int, skipped: Int) -> Unit) {
+        viewModelScope.launch {
+            var inserted = 0
+            var skipped = 0
+            val lines = csv.lines().filter { it.isNotBlank() }
+            val dataLines = if (lines.firstOrNull()?.lowercase()?.contains("phone") == true) lines.drop(1) else lines
+            for (line in dataLines) {
+                val cols = parseCsvLine(line)
+                val name = cols.getOrNull(0)?.trim().orEmpty()
+                val phone = cols.getOrNull(1)?.trim().orEmpty()
+                if (name.isBlank() || phone.isBlank()) { skipped++; continue }
+                val client = Client(
+                    name = name,
+                    phone = phone,
+                    clientType = cols.getOrNull(2)?.ifBlank { "طبيب" } ?: "طبيب",
+                    specialization = cols.getOrNull(3).orEmpty(),
+                    clientClass = cols.getOrNull(4)?.ifBlank { "B" } ?: "B",
+                    location = cols.getOrNull(5).orEmpty(),
+                    notes = cols.getOrNull(6).orEmpty(),
+                    isClassified = true
+                )
+                if (repository.findDuplicateClient(client) == null) {
+                    repository.insertClient(client)
+                    inserted++
+                } else skipped++
+            }
+            refreshClientsAndLookups()
+            onComplete(inserted, skipped)
+        }
+    }
+
+    private fun parseCsvLine(line: String): List<String> {
+        val result = mutableListOf<String>()
+        val current = StringBuilder()
+        var inQuotes = false
+        var i = 0
+        while (i < line.length) {
+            val ch = line[i]
+            when {
+                ch == '"' && inQuotes && i + 1 < line.length && line[i + 1] == '"' -> { current.append('"'); i++ }
+                ch == '"' -> inQuotes = !inQuotes
+                ch == ',' && !inQuotes -> { result.add(current.toString()); current.clear() }
+                else -> current.append(ch)
+            }
+            i++
+        }
+        result.add(current.toString())
+        return result
+    }
+
     fun logBulkMessages(clientIds: List<Long>) {
         viewModelScope.launch {
             for (id in clientIds) repository.logMessage(id)

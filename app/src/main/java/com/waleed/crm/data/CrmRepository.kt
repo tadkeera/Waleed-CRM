@@ -331,6 +331,15 @@ class CrmRepository(context: Context) {
         list
     }
 
+
+    suspend fun getAllMessageLogs(): List<MessageLog> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<MessageLog>()
+        dbHelper.readableDatabase.query(DatabaseHelper.TABLE_MESSAGE_LOGS, null, null, null, null, null, "timestamp DESC").use {
+            while (it.moveToNext()) list.add(cursorToMessageLog(it))
+        }
+        list
+    }
+
     suspend fun getDashboardAnalytics(): DashboardAnalytics = withContext(Dispatchers.IO) {
         val db = dbHelper.readableDatabase
         val startOfWeek = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -7) }.timeInMillis

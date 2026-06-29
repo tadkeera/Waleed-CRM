@@ -6,6 +6,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.Contacts
+import androidx.compose.material.icons.filled.ImportExport
 import androidx.compose.material.icons.filled.MedicalServices
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -27,6 +28,7 @@ sealed class BottomNavItem(val route: String, val title: String, val icon: Image
     object Doctors : BottomNavItem("doctors_list", "الأطباء", Icons.Default.MedicalServices)
     object Gallery : BottomNavItem("media_gallery", "المعرض", Icons.Default.Collections)
     object Dashboard : BottomNavItem("analytics_dashboard", "داشبورد تحليلي", Icons.Default.Analytics)
+    object ImportExport : BottomNavItem("import_export", "استيراد/تصدير", Icons.Default.ImportExport)
 }
 
 @Composable
@@ -39,7 +41,7 @@ fun AppNavigation(
         bottomBar = {
             val navBackStackEntry by navController.currentBackStackEntryAsState()
             val currentRoute = navBackStackEntry?.destination?.route
-            val items = listOf(BottomNavItem.Contacts, BottomNavItem.Doctors, BottomNavItem.Gallery, BottomNavItem.Dashboard)
+            val items = listOf(BottomNavItem.Contacts, BottomNavItem.Doctors, BottomNavItem.Gallery, BottomNavItem.Dashboard, BottomNavItem.ImportExport)
 
             if (currentRoute in items.map { it.route }) {
                 NavigationBar {
@@ -79,6 +81,9 @@ fun AppNavigation(
             }
             composable(BottomNavItem.Dashboard.route) {
                 DashboardScreen(viewModel = viewModel, navController = navController)
+            }
+            composable(BottomNavItem.ImportExport.route) {
+                ImportExportScreen(viewModel = viewModel, navController = navController)
             }
             composable(
                 route = "add_edit_client/{clientId}?phone={phone}",
